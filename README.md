@@ -24,32 +24,67 @@ pip install -e .
 
 ## Run
 
-With the virtualenv activated:
+### 1. Activate the environment
+
+Every time you open a new terminal, go into the repo and activate the virtualenv:
+
+```bash
+cd sorting-tool
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+```
+
+You should see `(.venv)` at the start of your prompt.
+
+### 2. Launch the tool
+
+**Option A — interactive (folder picker dialogs)**
 
 ```bash
 sorting-tool
-# or
-python -m sorting_tool
 ```
 
-You will be prompted for:
+(or `python -m sorting_tool`)
 
-1. **Input folder** — recursively searched for `.nii` / `.nii.gz` (the folder name becomes the top-level dataset folder in the output)
-2. **Output folder** — parent directory where `<dataset_name>/...` will be created
+1. A dialog asks for the **input folder PATH** — choose the root folder that contains your NIfTI scans (`.nii` / `.nii.gz`). The tool walks this folder recursively.
+2. A second dialog asks for the **output folder PATH** — choose the parent directory where sorted BIDS data should be written. The tool creates a subfolder named after the input folder inside this path.
 
-Or pass paths explicitly:
+**Option B — pass PATH arguments on the command line**
 
 ```bash
-sorting-tool --input /path/to/MyDataset --output /path/to/bids_parent
+sorting-tool --input /INPUT/FOLDER/PATH --output /OUTPUT/FOLDER/PATH
 ```
 
-## Workflow
+| Argument | Meaning |
+|----------|---------|
+| `--input` / `-i` | **Input folder PATH** — root of the dataset to label (searched recursively for `.nii` / `.nii.gz`). The last component of this path becomes the top-level dataset name in the output. |
+| `--output` / `-o` | **Output folder PATH** — parent directory for results. Saved scans go under `/OUTPUT/FOLDER/PATH/<input_folder_name>/...`. |
 
-1. Open a scan (axial / sagittal / coronal views + slice / brightness sliders).
-2. Confirm Protocol / Series metadata from the JSON sidecar.
-3. Set **Subject ID**, **Session date** (`YYYYMMDD` or `unknown`), and single-select **Acq / VOI / Desc / Type**.
-4. Click **Save Image to BIDS** — copies the scan using the labels currently selected in the UI.
-5. Use Previous / Next to walk the dataset.
+Example:
+
+```bash
+sorting-tool \
+  --input /Users/you/data/TestData \
+  --output /Users/you/data/sorted
+```
+
+This writes copies to:
+
+```text
+/Users/you/data/sorted/TestData/sub-<ID>/ses-<YYYYMMDD>/...
+```
+
+Original files under the input folder PATH are never modified.
+
+### 3. Use the GUI
+
+1. Confirm Protocol / Series text from the JSON sidecar (shown at the top right).
+2. Edit **Subject ID** and **Session date** (`YYYYMMDD` or `unknown`) if needed.
+3. Select **Acq**, **VOI**, **Desc**, and **Type** (one choice each).
+4. Use the left viewports to inspect axial / sagittal / coronal slices (slice + brightness sliders).
+5. Click **Save Image to BIDS** to **copy** the current scan into the output folder PATH using those labels.
+6. Click **Next Image Button** / **Previous Image Button** to move through the dataset.
+
+If you omit `--input` / `--output`, the tool prompts for the input folder PATH and output folder PATH in the terminal as well when launched without dialogs available.
 
 ### Viewing controls
 
