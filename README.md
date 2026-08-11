@@ -2,6 +2,8 @@
 
 Desktop GUI for labeling MRI NIfTI scans and saving them into a lab BIDS-like layout.
 
+![MRI Sorting Tool GUI](docs/gui-screenshot.png)
+
 **Saves are copy-only:** the tool never modifies the original NIfTI or JSON files. It copies each scan into the output tree and writes a new sidecar beside the copy.
 
 ## Requirements
