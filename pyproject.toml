@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sorting-tool"
+version = "0.1.0"
+description = "GUI tool for labeling MRI scans and saving them in BIDS-like format"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "PyQt6>=6.6.0",
+  "nibabel>=5.2.0",
+  "numpy>=1.26.0",
+]
+
+[project.scripts]
+sorting-tool = "sorting_tool.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sorting_tool*"]
