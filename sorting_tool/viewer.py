@@ -1,4 +1,4 @@
-"""Orthogonal MRI viewports with slice, brightness, stretch/fit, and zoom/pan."""
+"""Orthogonal MRI viewports with slice, brightness, stretch amount, and zoom/pan."""
 
 from __future__ import annotations
 
@@ -6,10 +6,8 @@ import numpy as np
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QImage, QMouseEvent, QPainter, QPixmap, QWheelEvent
 from PyQt6.QtWidgets import (
-    QButtonGroup,
     QHBoxLayout,
     QLabel,
-    QRadioButton,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -72,7 +70,7 @@ class ImageCanvas(QLabel):
 
 
 class PlaneView(QWidget):
-    """One plane: image, stretch/fit, slice slider, brightness slider, zoom/pan."""
+    """One plane: image, slice slider, brightness slider, zoom/pan."""
 
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
@@ -80,30 +78,15 @@ class PlaneView(QWidget):
         self._volume: np.ndarray | None = None
         self._axis = 0
         self._slice_count = 1
-        self._row_zoom = 1.0  # physical mm scale for image rows
-        self._col_zoom = 1.0  # physical mm scale for image cols
+        self._row_zoom = 1.0
+        self._col_zoom = 1.0
         self._zoom = 1.0
         self._pan_x = 0.0
         self._pan_y = 0.0
-        self._base_img: np.ndarray | None = None  # uint8 after windowing + spacing
+        self._stretch = 0.0  # 0=fit, 1=full stretch
+        self._base_img: np.ndarray | None = None
 
         self.image_label = ImageCanvas(self, title)
-
-        self.stretch_btn = QRadioButton("Stretch")
-        self.fit_btn = QRadioButton("Fit")
-        self.stretch_btn.setChecked(True)
-        self._mode_group = QButtonGroup(self)
-        self._mode_group.setExclusive(True)
-        self._mode_group.addButton(self.stretch_btn)
-        self._mode_group.addButton(self.fit_btn)
-        self.stretch_btn.toggled.connect(self._refresh)
-        self.fit_btn.toggled.connect(self._refresh)
-
-        mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel(title))
-        mode_row.addStretch(1)
-        mode_row.addWidget(self.stretch_btn)
-        mode_row.addWidget(self.fit_btn)
 
         self.slice_slider = QSlider(Qt.Orientation.Horizontal)
         self.slice_slider.setMinimum(0)
@@ -126,9 +109,14 @@ class PlaneView(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.addLayout(mode_row)
+        layout.addWidget(QLabel(title))
         layout.addLayout(mid, stretch=1)
         layout.addWidget(self.slice_slider)
+
+    def set_stretch(self, amount: float) -> None:
+        """amount in [0, 1]: 0 keep aspect (fit), 1 fill viewport (stretch)."""
+        self._stretch = float(np.clip(amount, 0.0, 1.0))
+        self._refresh()
 
     def set_volume(
         self,
@@ -176,11 +164,9 @@ class PlaneView(QWidget):
         factor = 1.15 if delta > 0 else 1 / 1.15
         new_zoom = float(np.clip(self._zoom * factor, 0.5, 8.0))
 
-        # Zoom toward cursor within the label
         pos = event.position()
         lw = max(self.image_label.width(), 1)
         lh = max(self.image_label.height(), 1)
-        # Convert cursor to normalized image coords before zoom change
         cx = (pos.x() - lw / 2 - self._pan_x) / self._zoom
         cy = (pos.y() - lh / 2 - self._pan_y) / self._zoom
         self._zoom = new_zoom
@@ -200,7 +186,6 @@ class PlaneView(QWidget):
         self._refresh()
 
     def _rebuild_base(self) -> None:
-        """Window slice and resample by voxel spacing into uint8 image."""
         if self._volume is None:
             self._base_img = None
             return
@@ -231,12 +216,30 @@ class PlaneView(QWidget):
         img8 = (norm * 255).astype(np.uint8)
         img8 = np.flipud(img8)
 
-        # Resample so pixel sizes match physical mm (normalize to min spacing)
         min_mm = min(self._row_zoom, self._col_zoom)
         zoom_factors = (self._row_zoom / min_mm, self._col_zoom / min_mm)
         if abs(zoom_factors[0] - 1.0) > 1e-3 or abs(zoom_factors[1] - 1.0) > 1e-3:
             img8 = ndimage.zoom(img8, zoom_factors, order=1)
         self._base_img = np.ascontiguousarray(img8)
+
+    def _target_size(self, pix: QPixmap, label_w: int, label_h: int) -> tuple[int, int]:
+        """Interpolate between fit (aspect) and fill (stretch) by self._stretch."""
+        fit = pix.scaled(
+            label_w,
+            label_h,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        fill = pix.scaled(
+            label_w,
+            label_h,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        t = self._stretch
+        w = int(round(fit.width() * (1 - t) + fill.width() * t))
+        h = int(round(fit.height() * (1 - t) + fill.height() * t))
+        return max(w, 1), max(h, 1)
 
     def _refresh(self) -> None:
         if self._base_img is None:
@@ -251,30 +254,18 @@ class PlaneView(QWidget):
 
         label_w = max(self.image_label.width(), 1)
         label_h = max(self.image_label.height(), 1)
-        aspect = (
-            Qt.AspectRatioMode.IgnoreAspectRatio
-            if self.stretch_btn.isChecked()
-            else Qt.AspectRatioMode.KeepAspectRatio
-        )
+        tw, th = self._target_size(pix, label_w, label_h)
+        if abs(self._zoom - 1.0) > 1e-3:
+            tw = max(int(tw * self._zoom), 1)
+            th = max(int(th * self._zoom), 1)
 
-        # Base fit into label, then apply user zoom
         fitted = pix.scaled(
-            label_w,
-            label_h,
-            aspect,
+            tw,
+            th,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
-        if abs(self._zoom - 1.0) > 1e-3:
-            zw = max(int(fitted.width() * self._zoom), 1)
-            zh = max(int(fitted.height() * self._zoom), 1)
-            fitted = pix.scaled(
-                zw,
-                zh,
-                aspect,
-                Qt.TransformationMode.SmoothTransformation,
-            )
 
-        # Compose onto a label-sized canvas with pan offset
         canvas = QPixmap(label_w, label_h)
         canvas.fill(Qt.GlobalColor.transparent)
         painter = QPainter(canvas)
@@ -290,25 +281,47 @@ class PlaneView(QWidget):
 
 
 class OrthoViewer(QWidget):
-    """Stacked Axial / Sagittal / Coronal views."""
+    """Stacked Axial / Sagittal / Coronal views with a global stretch slider."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.axial = PlaneView("Axial Image")
         self.sagittal = PlaneView("Sagittal Image")
         self.coronal = PlaneView("Coronal Image")
+        self._planes = (self.axial, self.sagittal, self.coronal)
+
+        self.stretch_slider = QSlider(Qt.Orientation.Horizontal)
+        self.stretch_slider.setMinimum(0)
+        self.stretch_slider.setMaximum(100)
+        self.stretch_slider.setValue(0)  # default = Fit
+        self.stretch_slider.setToolTip("0 = Fit (aspect preserved), 100 = full Stretch")
+        self.stretch_value = QLabel("0%")
+        self.stretch_slider.valueChanged.connect(self._on_stretch)
+
+        stretch_row = QHBoxLayout()
+        stretch_row.addWidget(QLabel("Stretch"))
+        stretch_row.addWidget(self.stretch_slider, stretch=1)
+        stretch_row.addWidget(self.stretch_value)
+        stretch_row.addWidget(QLabel("(Fit ← → Fill)"))
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(stretch_row)
         layout.addWidget(self.axial, stretch=1)
         layout.addWidget(self.sagittal, stretch=1)
         layout.addWidget(self.coronal, stretch=1)
+
+    def _on_stretch(self, value: int) -> None:
+        self.stretch_value.setText(f"{value}%")
+        amount = value / 100.0
+        for plane in self._planes:
+            plane.set_stretch(amount)
 
     def set_volume(
         self,
         data: np.ndarray,
         zooms: tuple[float, float, float] | None = None,
     ) -> None:
-        # Assume array indices [i, j, k] ~ (x, y, z); zooms are mm along those axes
         vol = np.asarray(data)
         if vol.ndim > 3:
             vol = vol[..., 0]
@@ -316,14 +329,13 @@ class OrthoViewer(QWidget):
             raise ValueError(f"Expected 3D volume, got shape {vol.shape}")
         zx, zy, zz = (1.0, 1.0, 1.0) if zooms is None else tuple(float(z) for z in zooms[:3])
 
-        # Axial: slice z → image rows = y, cols = x
+        amount = self.stretch_slider.value() / 100.0
         self.axial.set_volume(vol, axis=2, row_mm=zy, col_mm=zx)
-        # Sagittal: slice x → image rows = z, cols = y
         self.sagittal.set_volume(vol, axis=0, row_mm=zz, col_mm=zy)
-        # Coronal: slice y → image rows = z, cols = x
         self.coronal.set_volume(vol, axis=1, row_mm=zz, col_mm=zx)
+        for plane in self._planes:
+            plane.set_stretch(amount)
 
     def clear(self) -> None:
-        self.axial.clear()
-        self.sagittal.clear()
-        self.coronal.clear()
+        for plane in self._planes:
+            plane.clear()

@@ -23,11 +23,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sorting_tool.bids import save_to_bids
+from sorting_tool.bids import dataset_root, save_to_bids
 from sorting_tool.discovery import discover_scans, is_saved
 from sorting_tool.metadata import (
     ACQ_OPTIONS,
-    CE_OPTIONS,
+    DESC_OPTIONS,
     TYPE_OPTIONS,
     VOI_OPTIONS,
     ScanMeta,
@@ -78,6 +78,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
+        self.dataset_name = self.input_dir.name
+        self.dataset_out = dataset_root(self.output_dir, self.dataset_name)
         self.scans = scans
         self.index = 0
         self.current_meta: ScanMeta | None = None
@@ -92,12 +94,12 @@ class MainWindow(QMainWindow):
         self.subject_edit = QLineEdit()
         self.subject_edit.setPlaceholderText("Subject ID")
         self.session_edit = QLineEdit()
-        self.session_edit.setPlaceholderText("Session date MMDDYYYY or unknown")
+        self.session_edit.setPlaceholderText("Session date YYYYMMDD or unknown")
 
-        self.acq_row = RadioRow("Acq", ACQ_OPTIONS, columns=3)
+        self.acq_row = RadioRow("Acq", ACQ_OPTIONS, columns=2)
         self.voi_row = RadioRow("VOI", VOI_OPTIONS, columns=2)
-        self.ce_row = RadioRow("CE", CE_OPTIONS, columns=2)
-        self.type_row = RadioRow("Type", TYPE_OPTIONS, columns=4)
+        self.desc_row = RadioRow("Desc", DESC_OPTIONS, columns=3)
+        self.type_row = RadioRow("Type", TYPE_OPTIONS, columns=3)
 
         self.status_label = QLabel("")
         self.prev_btn = QPushButton("Previous Image Button")
@@ -127,7 +129,7 @@ class MainWindow(QMainWindow):
         meta_layout.addLayout(ses_row)
         meta_layout.addWidget(self.acq_row)
         meta_layout.addWidget(self.voi_row)
-        meta_layout.addWidget(self.ce_row)
+        meta_layout.addWidget(self.desc_row)
         meta_layout.addWidget(self.type_row)
         meta_layout.addStretch(1)
         meta_layout.addWidget(self.status_label)
@@ -174,10 +176,10 @@ class MainWindow(QMainWindow):
         self.session_edit.setText(meta.session_date or "unknown")
         self.acq_row.set_selected(meta.guess_acq)
         self.voi_row.set_selected(meta.guess_voi)
-        self.ce_row.set_selected(meta.guess_ce or "False")
+        self.desc_row.set_selected(meta.guess_desc or "none")
         self.type_row.set_selected(meta.guess_type)
 
-        saved = " [already saved]" if is_saved(self.output_dir, path) else ""
+        saved = " [already saved]" if is_saved(self.dataset_out, path) else ""
         self.status_label.setText(
             f"Scan {self.index + 1} / {len(self.scans)}{saved}\n{path.name}"
         )
@@ -196,7 +198,7 @@ class MainWindow(QMainWindow):
             return
         acq = self.acq_row.selected()
         voi = self.voi_row.selected()
-        ce = self.ce_row.selected()
+        desc = self.desc_row.selected()
         typ = self.type_row.selected()
         subject = self.subject_edit.text().strip()
         session = self.session_edit.text().strip()
@@ -205,11 +207,12 @@ class MainWindow(QMainWindow):
             dest = save_to_bids(
                 source_nii=self.current_meta.path,
                 output_dir=self.output_dir,
+                dataset_name=self.dataset_name,
                 subject_id=subject,
                 session_date=session,
                 voi=voi or "",
                 acq=acq or "",
-                ce=ce or "",
+                desc=desc or "none",
                 scan_type=typ or "",
             )
         except ValueError as exc:
@@ -219,21 +222,20 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save failed", str(exc))
             return
 
-        QMessageBox.information(self, "Saved", f"Wrote:\n{dest}")
-        # Advance to next unscanned if possible
+        QMessageBox.information(self, "Saved", f"Copied to:\n{dest}")
         for j in range(self.index + 1, len(self.scans)):
-            if not is_saved(self.output_dir, self.scans[j]):
+            if not is_saved(self.dataset_out, self.scans[j]):
                 self.load_index(j)
                 return
         self.load_index(self.index)
 
 
 def prompt_directories() -> tuple[Path, Path] | None:
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
     in_dir = QFileDialog.getExistingDirectory(None, "Select INPUT folder (scans)")
     if not in_dir:
         return None
-    out_dir = QFileDialog.getExistingDirectory(None, "Select OUTPUT folder (BIDS)")
+    out_dir = QFileDialog.getExistingDirectory(None, "Select OUTPUT folder (BIDS parent)")
     if not out_dir:
         return None
     return Path(in_dir), Path(out_dir)

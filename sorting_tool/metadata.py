@@ -7,23 +7,10 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ACQ_OPTIONS = ["Axial", "Sagittal", "Coronal"]
-VOI_OPTIONS = ["cervicalspine", "thoracicspine", "lumbarspine", "pelvis"]
-CE_OPTIONS = ["True", "False"]
-TYPE_OPTIONS = [
-    "T1w",
-    "T2w",
-    "T1wfatsat",
-    "T2wfatsat",
-    "stir",
-    "flair",
-    "dwi",
-    "func",
-    "fat",
-    "water",
-    "inphase",
-    "outphase",
-]
+ACQ_OPTIONS = ["axial", "sagittal"]
+VOI_OPTIONS = ["cervical", "lumbar", "brain", "thoracic"]
+DESC_OPTIONS = ["none", "fatSat_Pre_gad", "fatSat_Post_gad"]
+TYPE_OPTIONS = ["t2w", "t2star", "t1"]
 
 _SUB_RE = re.compile(r"(?:^|[/_\-])sub-([A-Za-z0-9]+)", re.IGNORECASE)
 _DATE_ISO = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
@@ -36,11 +23,11 @@ class ScanMeta:
     protocol: str = ""
     series: str = ""
     subject_id: str = ""
-    session_date: str = ""  # MMDDYYYY or unknown
+    session_date: str = ""  # YYYYMMDD or unknown
     sidecar: dict = field(default_factory=dict)
     guess_acq: str | None = None
     guess_voi: str | None = None
-    guess_ce: str | None = None
+    guess_desc: str | None = None
     guess_type: str | None = None
 
 
@@ -73,7 +60,6 @@ def _subject_from_sidecar(sidecar: dict) -> str:
         text = str(val).strip()
         if not text:
             continue
-        # PatientName can be dict-like in some dumps
         text = text.replace("^", "").replace(" ", "")
         if text.lower().startswith("sub-"):
             text = text[4:]
@@ -82,7 +68,6 @@ def _subject_from_sidecar(sidecar: dict) -> str:
 
 
 def _subject_from_path(path: Path) -> str:
-    # Prefer nearest parent folder named sub-*
     for part in reversed(path.parts):
         m = re.match(r"sub-([A-Za-z0-9]+)$", part, re.IGNORECASE)
         if m:
@@ -93,8 +78,18 @@ def _subject_from_path(path: Path) -> str:
     return ""
 
 
-def _date_to_mmddyyyy(year: str, month: str, day: str) -> str:
-    return f"{month}{day}{year}"
+def _date_to_yyyymmdd(year: str, month: str, day: str) -> str:
+    return f"{year}{month}{day}"
+
+
+def _normalize_date_digits(digits: str) -> str:
+    """Return YYYYMMDD when possible."""
+    if len(digits) != 8:
+        return digits
+    if digits.startswith(("19", "20")):
+        return digits  # already YYYYMMDD
+    # treat as MMDDYYYY
+    return _date_to_yyyymmdd(digits[4:8], digits[0:2], digits[2:4])
 
 
 def _session_from_sidecar(sidecar: dict) -> str:
@@ -110,30 +105,21 @@ def _session_from_sidecar(sidecar: dict) -> str:
         text = str(val)
         m = _DATE_ISO.search(text)
         if m:
-            return _date_to_mmddyyyy(m.group(1), m.group(2), m.group(3))
-        # DICOM YYYYMMDD
+            return _date_to_yyyymmdd(m.group(1), m.group(2), m.group(3))
         m = re.search(r"(?<!\d)(\d{4})(\d{2})(\d{2})(?!\d)", text)
         if m:
-            return _date_to_mmddyyyy(m.group(1), m.group(2), m.group(3))
+            return _date_to_yyyymmdd(m.group(1), m.group(2), m.group(3))
     return ""
 
 
 def _session_from_path(path: Path) -> str:
     for part in path.parts:
-        m = re.match(r"ses-.*?(\d{8})$", part, re.IGNORECASE)
+        m = re.match(r"ses-.*?(\d{8})", part, re.IGNORECASE)
         if m:
-            # already MMDDYYYY or YYYYMMDD — keep trailing 8 digits as-is if looks MMDDYYYY
-            digits = m.group(1)
-            # if starts with 20/19 treat as YYYYMMDD
-            if digits.startswith(("19", "20")):
-                return _date_to_mmddyyyy(digits[:4], digits[4:6], digits[6:8])
-            return digits
+            return _normalize_date_digits(m.group(1))
     m = _DATE_COMPACT.search(path.name)
     if m:
-        digits = m.group(1)
-        if digits.startswith(("19", "20")):
-            return _date_to_mmddyyyy(digits[:4], digits[4:6], digits[6:8])
-        return digits
+        return _normalize_date_digits(m.group(1))
     return ""
 
 
@@ -144,11 +130,9 @@ def _guess_acq(sidecar: dict, path: Path) -> str | None:
     ).lower()
     text += " " + path.name.lower()
     if re.search(r"\b(ax|axial)\b", text):
-        return "Axial"
+        return "axial"
     if re.search(r"\b(sag|sagittal)\b", text):
-        return "Sagittal"
-    if re.search(r"\b(cor|coronal)\b", text):
-        return "Coronal"
+        return "sagittal"
     return None
 
 
@@ -159,10 +143,10 @@ def _guess_voi(sidecar: dict, path: Path) -> str | None:
     ).lower()
     text += " " + path.name.lower()
     mapping = [
-        (r"cervical|c.?spine|cspines?", "cervicalspine"),
-        (r"thoracic|t.?spine|tspines?", "thoracicspine"),
-        (r"lumbar|l.?spine|lspines?", "lumbarspine"),
-        (r"pelvis|pelvic", "pelvis"),
+        (r"cervical|c.?spine|cspines?", "cervical"),
+        (r"thoracic|t.?spine|tspines?", "thoracic"),
+        (r"lumbar|l.?spine|lspines?", "lumbar"),
+        (r"\bbrain\b|cerebral|cranial", "brain"),
     ]
     for pattern, voi in mapping:
         if re.search(pattern, text):
@@ -170,41 +154,44 @@ def _guess_voi(sidecar: dict, path: Path) -> str | None:
     return None
 
 
-def _guess_ce(sidecar: dict, path: Path) -> str | None:
+def _guess_desc(sidecar: dict, path: Path) -> str | None:
     text = " ".join(
         str(sidecar.get(k, "")) for k in ("SeriesDescription", "ProtocolName")
     ).lower()
     text += " " + path.name.lower()
-    if re.search(r"(\+c\b|post.?contrast|gadolinium|\bce\b)", text):
-        return "True"
-    if re.search(r"(pre.?contrast|\-c\b|no.?contrast)", text):
-        return "False"
-    return None
+    fatsat = bool(re.search(r"fat.?sat|\bfs\b", text))
+    post = bool(re.search(r"(\+c\b|post.?contrast|post.?gad|\bgad\b)", text))
+    pre = bool(re.search(r"(pre.?contrast|\-c\b|pre.?gad)", text))
+    if fatsat and post:
+        return "fatSat_Post_gad"
+    if fatsat and pre:
+        return "fatSat_Pre_gad"
+    if fatsat:
+        return "fatSat_Pre_gad"
+    return "none"
 
 
 def _guess_type(sidecar: dict, path: Path) -> str | None:
     name = path.name
-    # Prefer BIDS-like suffix in filename
     for t in TYPE_OPTIONS:
         if re.search(rf"(?:^|_){re.escape(t)}(?:\.|_)", name, re.IGNORECASE):
             return t
+    # common BIDS uppercase
+    if re.search(r"(?:^|_)T2w(?:\.|_)", name):
+        return "t2w"
+    if re.search(r"(?:^|_)T1w(?:\.|_)", name):
+        return "t1"
+    if re.search(r"(?:^|_)T2star(?:\.|_)", name, re.IGNORECASE):
+        return "t2star"
+
     text = " ".join(
         str(sidecar.get(k, "")) for k in ("SeriesDescription", "ProtocolName")
     ).lower()
     text += " " + name.lower()
     checks = [
-        (r"t1w?.*fat.?sat|t1.*fs\b|t1wfatsat", "T1wfatsat"),
-        (r"t2w?.*fat.?sat|t2.*fs\b|t2wfatsat", "T2wfatsat"),
-        (r"\bstir\b", "stir"),
-        (r"\bflair\b", "flair"),
-        (r"\bdwi\b|diffusion", "dwi"),
-        (r"\bfunc\b|bold|fmri", "func"),
-        (r"\bin.?phase\b|inphase", "inphase"),
-        (r"\bout.?phase\b|outphase|opposed", "outphase"),
-        (r"\bfat\b", "fat"),
-        (r"\bwater\b", "water"),
-        (r"\bt1w?\b", "T1w"),
-        (r"\bt2w?\b", "T2w"),
+        (r"t2\*|t2star|t2.?star|gre.*t2", "t2star"),
+        (r"\bt2w?\b", "t2w"),
+        (r"\bt1w?\b", "t1"),
     ]
     for pattern, typ in checks:
         if re.search(pattern, text):
@@ -226,6 +213,6 @@ def extract_meta(nifti_path: Path) -> ScanMeta:
         sidecar=sidecar,
         guess_acq=_guess_acq(sidecar, path),
         guess_voi=_guess_voi(sidecar, path),
-        guess_ce=_guess_ce(sidecar, path),
+        guess_desc=_guess_desc(sidecar, path),
         guess_type=_guess_type(sidecar, path),
     )

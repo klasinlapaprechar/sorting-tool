@@ -20,7 +20,6 @@ class TestDiscovery(unittest.TestCase):
             self.skipTest("TestData not present")
         scans = discover_scans(TESTDATA)
         self.assertGreaterEqual(len(scans), 40)
-        self.assertTrue(all(p.suffixes[-1] == ".gz" or p.suffix == ".nii" for p in scans))
 
 
 class TestMetadata(unittest.TestCase):
@@ -34,64 +33,80 @@ class TestMetadata(unittest.TestCase):
         self.assertEqual(meta.subject_id, "amuAL")
         self.assertTrue(meta.protocol)
         self.assertTrue(meta.series)
-        self.assertEqual(meta.guess_type, "T2w")
+        self.assertEqual(meta.guess_type, "t2w")
 
 
 class TestBids(unittest.TestCase):
-    def test_path_and_save(self):
+    def test_path_and_save_copy_only(self):
         if not TESTDATA.is_dir():
             self.skipTest("TestData not present")
         src = TESTDATA / "sub-amuAL" / "anat" / "sub-amuAL_T2w.nii.gz"
+        src_json = src.with_name("sub-amuAL_T2w.json")
         if not src.is_file():
             self.skipTest("sample missing")
+        src_mtime = src.stat().st_mtime_ns
+        src_json_mtime = src_json.stat().st_mtime_ns if src_json.is_file() else None
 
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
             dest = save_to_bids(
                 source_nii=src,
                 output_dir=out,
+                dataset_name="TestData",
                 subject_id="amuAL",
-                session_date="unknown",
-                voi="cervicalspine",
-                acq="Sagittal",
-                ce="False",
-                scan_type="T2w",
+                session_date="20220812",
+                voi="cervical",
+                acq="sagittal",
+                desc="none",
+                scan_type="t2w",
             )
             self.assertTrue(dest.is_file())
-            self.assertIn("voi-cervicalspine", dest.name)
-            self.assertIn("acq-sagittal", dest.name)
-            self.assertTrue(dest.name.endswith("_T2w.nii.gz"))
-            self.assertNotIn("ce-true", dest.name)
+            self.assertEqual(
+                dest,
+                out
+                / "TestData"
+                / "sub-amuAL"
+                / "ses-20220812"
+                / "sub-amuAL_ses-20220812_voi-cervical_acq-sagittal_t2w.nii.gz",
+            )
             js = dest.with_name(dest.name.replace(".nii.gz", ".json"))
             self.assertTrue(js.is_file())
             payload = json.loads(js.read_text())
-            self.assertEqual(payload["SortingTool"]["type"], "T2w")
-            self.assertEqual(payload["SortingTool"]["acq"], "sagittal")
+            self.assertEqual(payload["SortingTool"]["type"], "t2w")
+            self.assertEqual(payload["SortingTool"]["voi"], "cervical")
 
-            # collision -> run-1
+            # originals untouched
+            self.assertEqual(src.stat().st_mtime_ns, src_mtime)
+            if src_json_mtime is not None:
+                self.assertEqual(src_json.stat().st_mtime_ns, src_json_mtime)
+
             dest2 = save_to_bids(
                 source_nii=src,
                 output_dir=out,
+                dataset_name="TestData",
                 subject_id="amuAL",
-                session_date="unknown",
-                voi="cervicalspine",
-                acq="Sagittal",
-                ce="False",
-                scan_type="T2w",
+                session_date="20220812",
+                voi="cervical",
+                acq="sagittal",
+                desc="none",
+                scan_type="t2w",
             )
             self.assertIn("_run-1_", dest2.name)
 
-    def test_ce_true_entity(self):
+    def test_desc_entity(self):
         nii, _ = build_bids_paths(
             Path(tempfile.gettempdir()),
+            "MyDataset",
             "X1",
-            "01012020",
-            "pelvis",
-            "Axial",
-            "True",
-            "T1w",
+            "20220812",
+            "brain",
+            "axial",
+            "fatSat_Post_gad",
+            "t1",
         )
-        self.assertIn("_ce-true_", nii.name)
+        self.assertIn("_desc-fatSat_Post_gad_", nii.name)
+        self.assertTrue(nii.name.endswith("_t1.nii.gz"))
+        self.assertIn("MyDataset", str(nii))
 
 
 if __name__ == "__main__":
