@@ -37,7 +37,7 @@ You should see `(.venv)` at the start of your prompt.
 
 ### 2. Launch the tool
 
-**Option A — interactive (folder picker dialogs)**
+**Option A — interactive PATH prompts in the terminal**
 
 ```bash
 sorting-tool
@@ -45,10 +45,14 @@ sorting-tool
 
 (or `python -m sorting_tool`)
 
-1. A dialog asks for the **input folder PATH** — choose the root folder that contains your NIfTI scans (`.nii` / `.nii.gz`). The tool walks this folder recursively.
-2. A second dialog asks for the **output folder PATH** — choose the parent directory where sorted BIDS data should be written. The tool creates a subfolder named after the input folder inside this path.
+The terminal will ask:
 
-**Option B — pass PATH arguments on the command line**
+1. `Input folder path:` — paste or type the **input folder PATH** (root folder that contains your NIfTI scans). The tool searches this folder recursively for `.nii` / `.nii.gz`.
+2. `Output folder path:` — paste or type the **output folder PATH** (parent directory for sorted BIDS results). The tool creates a subfolder named after the input folder inside this path.
+
+Then the GUI window opens.
+
+**Option B — pass the input folder PATH and output folder PATH as flags**
 
 ```bash
 sorting-tool --input /INPUT/FOLDER/PATH --output /OUTPUT/FOLDER/PATH
@@ -83,8 +87,6 @@ Original files under the input folder PATH are never modified.
 4. Use the left viewports to inspect axial / sagittal / coronal slices (slice + brightness sliders).
 5. Click **Save Image to BIDS** to **copy** the current scan into the output folder PATH using those labels.
 6. Click **Next Image Button** / **Previous Image Button** to move through the dataset.
-
-If you omit `--input` / `--output`, the tool prompts for the input folder PATH and output folder PATH in the terminal as well when launched without dialogs available.
 
 ### Viewing controls
 
