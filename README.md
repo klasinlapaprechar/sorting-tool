@@ -2,17 +2,25 @@
 
 Desktop GUI for labeling MRI NIfTI scans and saving them into a lab BIDS-like layout.
 
-## Install
+## Requirements
+
+- Python 3.10+
+- PyQt6, nibabel, numpy, scipy (installed via `requirements.txt`)
+
+## Install (any machine)
 
 ```bash
-cd "/Users/kla/LAB/Sorting tool"
+git clone https://github.com/klasinlapaprechar/sorting-tool.git
+cd sorting-tool
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 pip install -e .
 ```
 
 ## Run
+
+With the virtualenv activated:
 
 ```bash
 sorting-tool
@@ -25,12 +33,10 @@ You will be prompted for:
 1. **Input folder** — recursively searched for `.nii` / `.nii.gz`
 2. **Output folder** — BIDS-like destinations are written here
 
-Flags (skip prompts):
+Or pass paths explicitly:
 
 ```bash
-sorting-tool \
-  --input "/Users/kla/LAB/Summer_Data/TestData" \
-  --output "/Users/kla/LAB/Sorting tool/out_testdata"
+sorting-tool --input /path/to/scans --output /path/to/bids_out
 ```
 
 ## Workflow
@@ -62,11 +68,6 @@ Progress is tracked in `sorting_progress.json` under the output folder.
 ## Tests
 
 ```bash
-source .venv/bin/activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 python -m unittest discover -s tests -v
 ```
-
-## Requirements
-
-- Python 3.10+
-- PyQt6, nibabel, numpy, scipy
