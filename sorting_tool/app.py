@@ -154,13 +154,14 @@ class MainWindow(QMainWindow):
         try:
             img = nib.load(str(path))
             data = np.asarray(img.get_fdata(dtype=np.float32))
+            zooms = tuple(float(z) for z in img.header.get_zooms()[:3])
         except Exception as exc:  # noqa: BLE001
             self.viewer.clear()
             QMessageBox.critical(self, "Load error", f"Failed to load {path}:\n{exc}")
             return
 
         try:
-            self.viewer.set_volume(data)
+            self.viewer.set_volume(data, zooms=zooms)
         except Exception as exc:  # noqa: BLE001
             self.viewer.clear()
             QMessageBox.warning(self, "Display error", str(exc))

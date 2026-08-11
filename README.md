@@ -41,6 +41,14 @@ sorting-tool \
 4. Click **Save Image to BIDS** — filenames use the labels currently selected in the UI.
 5. Use Previous / Next to walk the dataset.
 
+### Viewing controls
+
+- **Stretch** (default): fill the viewport (helps with thin / anisotropic slices).
+- **Fit**: keep correct aspect ratio after applying voxel spacing from the NIfTI header.
+- **Scroll wheel** on an image: zoom in/out.
+- **Click-drag** on an image: pan.
+- **Double-click** an image: reset zoom and pan.
+
 ## Output naming
 
 ```text
@@ -61,4 +69,4 @@ python -m unittest discover -s tests -v
 ## Requirements
 
 - Python 3.10+
-- PyQt6, nibabel, numpy
+- PyQt6, nibabel, numpy, scipy
