@@ -61,13 +61,19 @@ class TestBids(unittest.TestCase):
                 scan_type="t2w",
             )
             self.assertTrue(dest.is_file())
-            self.assertEqual(
-                dest,
+            expected = (
                 out
                 / "TestData"
                 / "sub-amuAL"
                 / "ses-20220812"
-                / "sub-amuAL_ses-20220812_voi-cervical_acq-sagittal_t2w.nii.gz",
+                / "sub-amuAL_ses-20220812_voi-cervical_acq-sagittal_t2w.nii.gz"
+            )
+            self.assertEqual(dest.resolve(), expected.resolve())
+            self.assertTrue(
+                str(dest).endswith(
+                    "TestData/sub-amuAL/ses-20220812/"
+                    "sub-amuAL_ses-20220812_voi-cervical_acq-sagittal_t2w.nii.gz"
+                )
             )
             js = dest.with_name(dest.name.replace(".nii.gz", ".json"))
             self.assertTrue(js.is_file())
