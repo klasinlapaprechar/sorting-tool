@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -17,9 +20,11 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -33,6 +38,7 @@ from sorting_tool.metadata import (
     VOI_OPTIONS,
     ScanMeta,
     extract_meta,
+    sidecar_for,
 )
 from sorting_tool.viewer import OrthoViewer
 
@@ -90,10 +96,29 @@ class MainWindow(QMainWindow):
 
         self.viewer = OrthoViewer()
 
+        self.filename_label = QLabel("File: —")
+        self.filename_label.setWordWrap(True)
+        self.filename_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+
         self.protocol_label = QLabel("Protocol Description: —")
         self.series_label = QLabel("Series Description: —")
         self.protocol_label.setWordWrap(True)
         self.series_label.setWordWrap(True)
+
+        self.json_view = QPlainTextEdit()
+        self.json_view.setReadOnly(True)
+        self.json_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.json_view.setPlaceholderText("JSON sidecar contents will appear here…")
+        mono = QFont("Menlo")
+        mono.setStyleHint(QFont.StyleHint.Monospace)
+        mono.setPointSize(11)
+        self.json_view.setFont(mono)
+        self.json_view.setMinimumHeight(180)
+        self.json_view.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
 
         self.subject_edit = QLineEdit()
         self.subject_edit.setPlaceholderText("Subject ID (optional)")
@@ -121,8 +146,12 @@ class MainWindow(QMainWindow):
 
         meta_inner = QWidget()
         meta_layout = QVBoxLayout(meta_inner)
+        meta_layout.addWidget(QLabel("<b>File name</b>"))
+        meta_layout.addWidget(self.filename_label)
         meta_layout.addWidget(self.protocol_label)
         meta_layout.addWidget(self.series_label)
+        meta_layout.addWidget(QLabel("<b>JSON sidecar</b>"))
+        meta_layout.addWidget(self.json_view, stretch=1)
         sub_row = QHBoxLayout()
         sub_row.addWidget(QLabel("Subject ID:"))
         sub_row.addWidget(self.subject_edit)
@@ -135,7 +164,6 @@ class MainWindow(QMainWindow):
         meta_layout.addWidget(self.voi_row)
         meta_layout.addWidget(self.ce_row)
         meta_layout.addWidget(self.type_row)
-        meta_layout.addStretch(1)
         meta_layout.addWidget(self.status_label)
         meta_layout.addWidget(self.prev_btn)
         meta_layout.addWidget(self.next_btn)
@@ -182,8 +210,11 @@ class MainWindow(QMainWindow):
 
         meta = extract_meta(path)
         self.current_meta = meta
+        self.filename_label.setText(path.name)
+        self.filename_label.setToolTip(str(path))
         self.protocol_label.setText(f"Protocol Description: {meta.protocol or '—'}")
         self.series_label.setText(f"Series Description: {meta.series or '—'}")
+        self._show_sidecar(path, meta.sidecar)
         self.subject_edit.setText(meta.subject_id)
         self.session_edit.setText(meta.session_id)
         self.acq_row.set_selected(meta.guess_acq)
@@ -196,6 +227,22 @@ class MainWindow(QMainWindow):
             f"Scan {self.index + 1} / {len(self.scans)}{saved}\n{path.name}"
         )
         self.setWindowTitle(f"MRI Sorting Tool — {path.name}")
+
+    def _show_sidecar(self, nifti_path: Path, sidecar: dict) -> None:
+        json_path = sidecar_for(nifti_path)
+        if json_path is None:
+            self.json_view.setPlainText("(no JSON sidecar found for this scan)")
+            return
+        if sidecar:
+            text = json.dumps(sidecar, indent=2, ensure_ascii=False)
+        else:
+            try:
+                text = json_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                text = f"(failed to read sidecar: {exc})"
+        header = f"# {json_path.name}\n"
+        self.json_view.setPlainText(header + text)
+        self.json_view.moveCursor(QTextCursor.MoveOperation.Start)
 
     def prev_scan(self) -> None:
         if self.index > 0:

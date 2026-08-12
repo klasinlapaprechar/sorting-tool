@@ -2,9 +2,9 @@
 
 Desktop GUI for labeling MRI NIfTI scans and saving them into a lab BIDS-like layout.
 
-![MRI Sorting Tool GUI](docs/gui-screenshot-ce-labels.png)
+![MRI Sorting Tool GUI](docs/gui-screenshot-json-sidecar.png)
 
-*Beta UI: orthogonal viewers with stretch slider; optional Subject/Session IDs; Acq / VOI / CE / Type labels.*
+*Beta UI: file name + JSON sidecar on the right; stretch slider; optional Subject/Session IDs; Acq / VOI / CE / Type.*
 
 **Saves are copy-only:** the tool never moves or modifies the original NIfTI or JSON files. It **copies** each scan into the output tree and writes a **new** sidecar beside the copy.
 
@@ -83,12 +83,13 @@ Original files under the input folder PATH are never modified or moved.
 
 ### 3. Use the GUI
 
-1. Confirm Protocol / Series text from the JSON sidecar (shown at the top right).
-2. Optionally edit **Subject ID** and **Session ID** (free-text strings; may be left blank).
-3. Select **Acq**, **VOI**, **CE** (`true` / `false`), and **Type** / suffix (one choice each).
-4. Use the left viewports to inspect axial / sagittal / coronal slices (slice + brightness sliders).
-5. Click **Save Image to BIDS** to **copy** the current scan into the output folder PATH using those labels.
-6. Click **Next Image Button** / **Previous Image Button** to move through the dataset.
+1. Confirm the **file name** and scroll the **JSON sidecar** panel on the right.
+2. Confirm Protocol / Series text (summarized above the labels).
+3. Optionally edit **Subject ID** and **Session ID** (free-text strings; may be left blank).
+4. Select **Acq**, **VOI**, **CE** (`true` / `false`), and **Type** / suffix (one choice each).
+5. Use the left viewports to inspect axial / sagittal / coronal slices (slice + brightness sliders).
+6. Click **Save Image to BIDS** to **copy** the current scan into the output folder PATH using those labels.
+7. Click **Next Image Button** / **Previous Image Button** to move through the dataset.
 
 ### Viewing controls
 
