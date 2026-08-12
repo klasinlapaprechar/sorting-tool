@@ -4,7 +4,9 @@ Desktop GUI for labeling MRI NIfTI scans and saving them into a lab BIDS-like la
 
 ![MRI Sorting Tool GUI](docs/gui-screenshot.png)
 
-**Saves are copy-only:** the tool never modifies the original NIfTI or JSON files. It copies each scan into the output tree and writes a new sidecar beside the copy.
+*Beta UI: orthogonal viewers with stretch slider; optional Subject/Session IDs; Acq / VOI / CE / Type labels.*
+
+**Saves are copy-only:** the tool never moves or modifies the original NIfTI or JSON files. It **copies** each scan into the output tree and writes a **new** sidecar beside the copy.
 
 ## Requirements
 
@@ -71,19 +73,19 @@ sorting-tool \
   --output /Users/you/data/sorted
 ```
 
-This writes copies to:
+This **copies** files to:
 
 ```text
-/Users/you/data/sorted/TestData/sub-<ID>/ses-<YYYYMMDD>/...
+/Users/you/data/sorted/TestData/sub-<ID>/ses-<sessionid>/...
 ```
 
-Original files under the input folder PATH are never modified.
+Original files under the input folder PATH are never modified or moved.
 
 ### 3. Use the GUI
 
 1. Confirm Protocol / Series text from the JSON sidecar (shown at the top right).
-2. Edit **Subject ID** and **Session date** (`YYYYMMDD` or `unknown`) if needed.
-3. Select **Acq**, **VOI**, **Desc**, and **Type** (one choice each).
+2. Optionally edit **Subject ID** and **Session ID** (free-text strings; may be left blank).
+3. Select **Acq**, **VOI**, **CE** (`true` / `false`), and **Type** / suffix (one choice each).
 4. Use the left viewports to inspect axial / sagittal / coronal slices (slice + brightness sliders).
 5. Click **Save Image to BIDS** to **copy** the current scan into the output folder PATH using those labels.
 6. Click **Next Image Button** / **Previous Image Button** to move through the dataset.
@@ -104,28 +106,32 @@ Top-level folder matches the **input dataset folder name**:
 
 ```text
 <output>/<input_dataset_name>/
-  sub-<ID>/
-    ses-<YYYYMMDD>/
-      sub-<ID>_ses-<YYYYMMDD>_voi-<voi>_acq-<acq>[_desc-<desc>]_<type>.nii.gz
-      sub-<ID>_ses-<YYYYMMDD>_voi-<voi>_acq-<acq>[_desc-<desc>]_<type>.json
+  sub-<subjectid|/unknown>/
+    ses-<sessionid|/unknown>/
+      [sub-<subjectid>_][ses-<sessionid>_]acq-<acq>_voi-<voi>_ce-<true|false>[_run-N]_<suffix>.nii.gz
+      [sub-<subjectid>_][ses-<sessionid>_]acq-<acq>_voi-<voi>_ce-<true|false>[_run-N]_<suffix>.json
 ```
 
-Label values:
-
-| Field | Options |
-|-------|---------|
-| `voi` | `cervical`, `lumbar`, `brain`, `thoracic` |
-| `acq` | `axial`, `sagittal` |
-| `desc` | omitted when `none`; else `fatSat_Pre_gad` or `fatSat_Post_gad` |
-| type suffix | `t2w`, `t2star`, `t1` |
+- **Subject ID** and **Session ID** are optional. If blank, they are omitted from the **filename**, and folders use `sub-unknown` / `ses-unknown`.
+- There is **no** `desc-` entity. Contrast is encoded as **`ce-true`** or **`ce-false`**.
+- If a name already exists, `_run-<N>` is inserted before the suffix.
 
 Example:
 
 ```text
-TestData/sub-amuAL/ses-20220812/sub-amuAL_ses-20220812_voi-cervical_acq-sagittal_desc-fatSat_Post_gad_t1.nii.gz
+sub-subjectid_ses-sessionid_acq-axial_voi-lumbarspine_ce-false_t1w.nii.gz
 ```
 
-If a name already exists, `_run-<N>` is inserted before the type suffix. Progress is tracked in `sorting_progress.json` under the dataset output folder.
+### Label options
+
+| Field | Options |
+|-------|---------|
+| `acq` | `axial`, `sagittal`, `coronal` |
+| `voi` | `brain`, `cervicalspine`, `cervicothoracicspine`, `thoracicspine`, `thoracolumbarspine`, `lumbarspine`, `fullspine`, `pelvis`, `hip`, `thigh`, `knee`, `leg`, `ankle`, `foot`, `shoulder`, `arm`, `elbow`, `forearm`, `hand`, `abdomen`, `thorax`, `liver`, `heart`, `head`, `jaw` |
+| `ce` | `true`, `false` |
+| suffix | `t1w`, `t2w`, `t2sfatsat`, `t1wfatsat`, `t2star`, `mtoff_MTS`, `mton_MTS`, `t1w_MTS`, `stir`, `flair`, `dwi`, `func`, `fat`, `water`, `inphase`, `outphase` |
+
+Progress is tracked in `sorting_progress.json` under the dataset output folder.
 
 ## Tests
 

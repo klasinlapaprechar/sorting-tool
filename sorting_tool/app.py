@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -27,7 +28,7 @@ from sorting_tool.bids import dataset_root, save_to_bids
 from sorting_tool.discovery import discover_scans, is_saved
 from sorting_tool.metadata import (
     ACQ_OPTIONS,
-    DESC_OPTIONS,
+    CE_OPTIONS,
     TYPE_OPTIONS,
     VOI_OPTIONS,
     ScanMeta,
@@ -85,21 +86,24 @@ class MainWindow(QMainWindow):
         self.current_meta: ScanMeta | None = None
 
         self.setWindowTitle("MRI Sorting Tool")
-        self.resize(1200, 900)
+        self.resize(1280, 920)
 
         self.viewer = OrthoViewer()
 
         self.protocol_label = QLabel("Protocol Description: —")
         self.series_label = QLabel("Series Description: —")
-        self.subject_edit = QLineEdit()
-        self.subject_edit.setPlaceholderText("Subject ID")
-        self.session_edit = QLineEdit()
-        self.session_edit.setPlaceholderText("Session date YYYYMMDD or unknown")
+        self.protocol_label.setWordWrap(True)
+        self.series_label.setWordWrap(True)
 
-        self.acq_row = RadioRow("Acq", ACQ_OPTIONS, columns=2)
-        self.voi_row = RadioRow("VOI", VOI_OPTIONS, columns=2)
-        self.desc_row = RadioRow("Desc", DESC_OPTIONS, columns=3)
-        self.type_row = RadioRow("Type", TYPE_OPTIONS, columns=3)
+        self.subject_edit = QLineEdit()
+        self.subject_edit.setPlaceholderText("Subject ID (optional)")
+        self.session_edit = QLineEdit()
+        self.session_edit.setPlaceholderText("Session ID (optional free text)")
+
+        self.acq_row = RadioRow("Acq", ACQ_OPTIONS, columns=3)
+        self.voi_row = RadioRow("VOI", VOI_OPTIONS, columns=3)
+        self.ce_row = RadioRow("CE", CE_OPTIONS, columns=2)
+        self.type_row = RadioRow("Type", TYPE_OPTIONS, columns=4)
 
         self.status_label = QLabel("")
         self.prev_btn = QPushButton("Previous Image Button")
@@ -115,8 +119,8 @@ class MainWindow(QMainWindow):
         self.next_btn.clicked.connect(self.next_scan)
         self.save_btn.clicked.connect(self.save_scan)
 
-        meta_box = QGroupBox("Metadata / Labels")
-        meta_layout = QVBoxLayout(meta_box)
+        meta_inner = QWidget()
+        meta_layout = QVBoxLayout(meta_inner)
         meta_layout.addWidget(self.protocol_label)
         meta_layout.addWidget(self.series_label)
         sub_row = QHBoxLayout()
@@ -124,18 +128,26 @@ class MainWindow(QMainWindow):
         sub_row.addWidget(self.subject_edit)
         meta_layout.addLayout(sub_row)
         ses_row = QHBoxLayout()
-        ses_row.addWidget(QLabel("Session date:"))
+        ses_row.addWidget(QLabel("Session ID:"))
         ses_row.addWidget(self.session_edit)
         meta_layout.addLayout(ses_row)
         meta_layout.addWidget(self.acq_row)
         meta_layout.addWidget(self.voi_row)
-        meta_layout.addWidget(self.desc_row)
+        meta_layout.addWidget(self.ce_row)
         meta_layout.addWidget(self.type_row)
         meta_layout.addStretch(1)
         meta_layout.addWidget(self.status_label)
         meta_layout.addWidget(self.prev_btn)
         meta_layout.addWidget(self.next_btn)
         meta_layout.addWidget(self.save_btn)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(meta_inner)
+
+        meta_box = QGroupBox("Metadata / Labels")
+        box_layout = QVBoxLayout(meta_box)
+        box_layout.addWidget(scroll)
 
         central = QWidget()
         root = QHBoxLayout(central)
@@ -173,10 +185,10 @@ class MainWindow(QMainWindow):
         self.protocol_label.setText(f"Protocol Description: {meta.protocol or '—'}")
         self.series_label.setText(f"Series Description: {meta.series or '—'}")
         self.subject_edit.setText(meta.subject_id)
-        self.session_edit.setText(meta.session_date or "unknown")
+        self.session_edit.setText(meta.session_id)
         self.acq_row.set_selected(meta.guess_acq)
         self.voi_row.set_selected(meta.guess_voi)
-        self.desc_row.set_selected(meta.guess_desc or "none")
+        self.ce_row.set_selected(meta.guess_ce or "false")
         self.type_row.set_selected(meta.guess_type)
 
         saved = " [already saved]" if is_saved(self.dataset_out, path) else ""
@@ -198,7 +210,7 @@ class MainWindow(QMainWindow):
             return
         acq = self.acq_row.selected()
         voi = self.voi_row.selected()
-        desc = self.desc_row.selected()
+        ce = self.ce_row.selected()
         typ = self.type_row.selected()
         subject = self.subject_edit.text().strip()
         session = self.session_edit.text().strip()
@@ -209,10 +221,10 @@ class MainWindow(QMainWindow):
                 output_dir=self.output_dir,
                 dataset_name=self.dataset_name,
                 subject_id=subject,
-                session_date=session,
-                voi=voi or "",
+                session_id=session,
                 acq=acq or "",
-                desc=desc or "none",
+                voi=voi or "",
+                ce=ce or "",
                 scan_type=typ or "",
             )
         except ValueError as exc:

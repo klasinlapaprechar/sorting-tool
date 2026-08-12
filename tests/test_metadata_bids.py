@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sorting_tool.bids import build_bids_paths, save_to_bids
+from sorting_tool.bids import build_bids_paths, build_stem, save_to_bids
 from sorting_tool.discovery import discover_scans
 from sorting_tool.metadata import extract_meta
 
@@ -37,6 +37,31 @@ class TestMetadata(unittest.TestCase):
 
 
 class TestBids(unittest.TestCase):
+    def test_stem_order_and_ce(self):
+        stem = build_stem(
+            "subjectid",
+            "sessionid",
+            "axial",
+            "lumbarspine",
+            "false",
+            "t1w",
+        )
+        self.assertEqual(
+            stem,
+            "sub-subjectid_ses-sessionid_acq-axial_voi-lumbarspine_ce-false_t1w",
+        )
+
+    def test_optional_sub_ses_omitted_from_filename(self):
+        stem = build_stem("", "", "sagittal", "brain", "true", "t2w")
+        self.assertEqual(stem, "acq-sagittal_voi-brain_ce-true_t2w")
+        self.assertNotIn("sub-", stem)
+        self.assertNotIn("ses-", stem)
+
+    def test_underscore_suffix(self):
+        stem = build_stem("X1", "20220812", "axial", "cervicalspine", "false", "mtoff_MTS")
+        self.assertTrue(stem.endswith("_mtoff_MTS"))
+        self.assertIn("_ce-false_", stem)
+
     def test_path_and_save_copy_only(self):
         if not TESTDATA.is_dir():
             self.skipTest("TestData not present")
@@ -54,34 +79,30 @@ class TestBids(unittest.TestCase):
                 output_dir=out,
                 dataset_name="TestData",
                 subject_id="amuAL",
-                session_date="20220812",
-                voi="cervical",
+                session_id="20220812",
                 acq="sagittal",
-                desc="none",
+                voi="cervicalspine",
+                ce="false",
                 scan_type="t2w",
             )
             self.assertTrue(dest.is_file())
-            expected = (
-                out
-                / "TestData"
-                / "sub-amuAL"
-                / "ses-20220812"
-                / "sub-amuAL_ses-20220812_voi-cervical_acq-sagittal_t2w.nii.gz"
+            expected_name = (
+                "sub-amuAL_ses-20220812_acq-sagittal_voi-cervicalspine_ce-false_t2w.nii.gz"
             )
-            self.assertEqual(dest.resolve(), expected.resolve())
+            self.assertEqual(dest.name, expected_name)
             self.assertTrue(
-                str(dest).endswith(
-                    "TestData/sub-amuAL/ses-20220812/"
-                    "sub-amuAL_ses-20220812_voi-cervical_acq-sagittal_t2w.nii.gz"
+                str(dest.resolve()).endswith(
+                    f"TestData/sub-amuAL/ses-20220812/{expected_name}"
                 )
             )
             js = dest.with_name(dest.name.replace(".nii.gz", ".json"))
             self.assertTrue(js.is_file())
             payload = json.loads(js.read_text())
             self.assertEqual(payload["SortingTool"]["type"], "t2w")
-            self.assertEqual(payload["SortingTool"]["voi"], "cervical")
+            self.assertEqual(payload["SortingTool"]["voi"], "cervicalspine")
+            self.assertEqual(payload["SortingTool"]["ce"], "false")
+            self.assertNotIn("desc", payload["SortingTool"])
 
-            # originals untouched
             self.assertEqual(src.stat().st_mtime_ns, src_mtime)
             if src_json_mtime is not None:
                 self.assertEqual(src_json.stat().st_mtime_ns, src_json_mtime)
@@ -91,28 +112,28 @@ class TestBids(unittest.TestCase):
                 output_dir=out,
                 dataset_name="TestData",
                 subject_id="amuAL",
-                session_date="20220812",
-                voi="cervical",
+                session_id="20220812",
                 acq="sagittal",
-                desc="none",
+                voi="cervicalspine",
+                ce="false",
                 scan_type="t2w",
             )
             self.assertIn("_run-1_", dest2.name)
 
-    def test_desc_entity(self):
+    def test_blank_ids_use_unknown_folders(self):
         nii, _ = build_bids_paths(
             Path(tempfile.gettempdir()),
             "MyDataset",
-            "X1",
-            "20220812",
-            "brain",
+            "",
+            "",
             "axial",
-            "fatSat_Post_gad",
-            "t1",
+            "lumbarspine",
+            "false",
+            "t1w",
         )
-        self.assertIn("_desc-fatSat_Post_gad_", nii.name)
-        self.assertTrue(nii.name.endswith("_t1.nii.gz"))
-        self.assertIn("MyDataset", str(nii))
+        self.assertIn("sub-unknown", str(nii))
+        self.assertIn("ses-unknown", str(nii))
+        self.assertEqual(nii.name, "acq-axial_voi-lumbarspine_ce-false_t1w.nii.gz")
 
 
 if __name__ == "__main__":

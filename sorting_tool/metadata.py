@@ -7,10 +7,56 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ACQ_OPTIONS = ["axial", "sagittal"]
-VOI_OPTIONS = ["cervical", "lumbar", "brain", "thoracic"]
-DESC_OPTIONS = ["none", "fatSat_Pre_gad", "fatSat_Post_gad"]
-TYPE_OPTIONS = ["t2w", "t2star", "t1"]
+ACQ_OPTIONS = ["axial", "sagittal", "coronal"]
+
+VOI_OPTIONS = [
+    "brain",
+    "cervicalspine",
+    "cervicothoracicspine",
+    "thoracicspine",
+    "thoracolumbarspine",
+    "lumbarspine",
+    "fullspine",
+    "pelvis",
+    "hip",
+    "thigh",
+    "knee",
+    "leg",
+    "ankle",
+    "foot",
+    "shoulder",
+    "arm",
+    "elbow",
+    "forearm",
+    "hand",
+    "abdomen",
+    "thorax",
+    "liver",
+    "heart",
+    "head",
+    "jaw",
+]
+
+CE_OPTIONS = ["true", "false"]
+
+TYPE_OPTIONS = [
+    "t1w",
+    "t2w",
+    "t2sfatsat",
+    "t1wfatsat",
+    "t2star",
+    "mtoff_MTS",
+    "mton_MTS",
+    "t1w_MTS",
+    "stir",
+    "flair",
+    "dwi",
+    "func",
+    "fat",
+    "water",
+    "inphase",
+    "outphase",
+]
 
 _SUB_RE = re.compile(r"(?:^|[/_\-])sub-([A-Za-z0-9]+)", re.IGNORECASE)
 _DATE_ISO = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
@@ -23,11 +69,11 @@ class ScanMeta:
     protocol: str = ""
     series: str = ""
     subject_id: str = ""
-    session_date: str = ""  # YYYYMMDD or unknown
+    session_id: str = ""  # optional free-text (often YYYYMMDD when known)
     sidecar: dict = field(default_factory=dict)
     guess_acq: str | None = None
     guess_voi: str | None = None
-    guess_desc: str | None = None
+    guess_ce: str | None = None
     guess_type: str | None = None
 
 
@@ -83,12 +129,10 @@ def _date_to_yyyymmdd(year: str, month: str, day: str) -> str:
 
 
 def _normalize_date_digits(digits: str) -> str:
-    """Return YYYYMMDD when possible."""
     if len(digits) != 8:
         return digits
     if digits.startswith(("19", "20")):
-        return digits  # already YYYYMMDD
-    # treat as MMDDYYYY
+        return digits
     return _date_to_yyyymmdd(digits[4:8], digits[0:2], digits[2:4])
 
 
@@ -114,9 +158,13 @@ def _session_from_sidecar(sidecar: dict) -> str:
 
 def _session_from_path(path: Path) -> str:
     for part in path.parts:
-        m = re.match(r"ses-.*?(\d{8})", part, re.IGNORECASE)
+        m = re.match(r"ses-([A-Za-z0-9]+)", part, re.IGNORECASE)
         if m:
-            return _normalize_date_digits(m.group(1))
+            body = m.group(1)
+            dig = re.search(r"(\d{8})", body)
+            if dig:
+                return _normalize_date_digits(dig.group(1))
+            return body
     m = _DATE_COMPACT.search(path.name)
     if m:
         return _normalize_date_digits(m.group(1))
@@ -133,6 +181,8 @@ def _guess_acq(sidecar: dict, path: Path) -> str | None:
         return "axial"
     if re.search(r"\b(sag|sagittal)\b", text):
         return "sagittal"
+    if re.search(r"\b(cor|coronal)\b", text):
+        return "coronal"
     return None
 
 
@@ -143,10 +193,31 @@ def _guess_voi(sidecar: dict, path: Path) -> str | None:
     ).lower()
     text += " " + path.name.lower()
     mapping = [
-        (r"cervical|c.?spine|cspines?", "cervical"),
-        (r"thoracic|t.?spine|tspines?", "thoracic"),
-        (r"lumbar|l.?spine|lspines?", "lumbar"),
+        (r"cervicothoracic|c.?t.?spine", "cervicothoracicspine"),
+        (r"thoracolumbar|t.?l.?spine", "thoracolumbarspine"),
+        (r"full.?spine|whole.?spine|entire.?spine", "fullspine"),
+        (r"cervical|c.?spine|cspines?", "cervicalspine"),
+        (r"thoracic|t.?spine|tspines?", "thoracicspine"),
+        (r"lumbar|l.?spine|lspines?", "lumbarspine"),
         (r"\bbrain\b|cerebral|cranial", "brain"),
+        (r"pelvis|pelvic", "pelvis"),
+        (r"\bhip\b", "hip"),
+        (r"thigh|femur", "thigh"),
+        (r"\bknee\b", "knee"),
+        (r"\bleg\b|lower.?extrem", "leg"),
+        (r"ankle", "ankle"),
+        (r"\bfoot\b", "foot"),
+        (r"shoulder", "shoulder"),
+        (r"\belbow\b", "elbow"),
+        (r"forearm", "forearm"),
+        (r"\bhand\b|wrist", "hand"),
+        (r"\barm\b|humerus", "arm"),
+        (r"abdomen|abdominal", "abdomen"),
+        (r"\bthorax\b|chest", "thorax"),
+        (r"\bliver\b", "liver"),
+        (r"\bheart\b|cardiac", "heart"),
+        (r"\bjaw\b|mandible|tmj", "jaw"),
+        (r"\bhead\b", "head"),
     ]
     for pattern, voi in mapping:
         if re.search(pattern, text):
@@ -154,33 +225,28 @@ def _guess_voi(sidecar: dict, path: Path) -> str | None:
     return None
 
 
-def _guess_desc(sidecar: dict, path: Path) -> str | None:
+def _guess_ce(sidecar: dict, path: Path) -> str | None:
     text = " ".join(
         str(sidecar.get(k, "")) for k in ("SeriesDescription", "ProtocolName")
     ).lower()
     text += " " + path.name.lower()
-    fatsat = bool(re.search(r"fat.?sat|\bfs\b", text))
-    post = bool(re.search(r"(\+c\b|post.?contrast|post.?gad|\bgad\b)", text))
-    pre = bool(re.search(r"(pre.?contrast|\-c\b|pre.?gad)", text))
-    if fatsat and post:
-        return "fatSat_Post_gad"
-    if fatsat and pre:
-        return "fatSat_Pre_gad"
-    if fatsat:
-        return "fatSat_Pre_gad"
-    return "none"
+    if re.search(r"(\+c\b|post.?contrast|gadolinium|post.?gad|\bce\b)", text):
+        return "true"
+    if re.search(r"(pre.?contrast|\-c\b|no.?contrast|pre.?gad)", text):
+        return "false"
+    return None
 
 
 def _guess_type(sidecar: dict, path: Path) -> str | None:
     name = path.name
-    for t in TYPE_OPTIONS:
+    ordered = sorted(TYPE_OPTIONS, key=len, reverse=True)
+    for t in ordered:
         if re.search(rf"(?:^|_){re.escape(t)}(?:\.|_)", name, re.IGNORECASE):
             return t
-    # common BIDS uppercase
     if re.search(r"(?:^|_)T2w(?:\.|_)", name):
         return "t2w"
     if re.search(r"(?:^|_)T1w(?:\.|_)", name):
-        return "t1"
+        return "t1w"
     if re.search(r"(?:^|_)T2star(?:\.|_)", name, re.IGNORECASE):
         return "t2star"
 
@@ -189,9 +255,22 @@ def _guess_type(sidecar: dict, path: Path) -> str | None:
     ).lower()
     text += " " + name.lower()
     checks = [
-        (r"t2\*|t2star|t2.?star|gre.*t2", "t2star"),
+        (r"mtoff|mt.?off", "mtoff_MTS"),
+        (r"mton|mt.?on", "mton_MTS"),
+        (r"t1w?.?mts|mts.*t1", "t1w_MTS"),
+        (r"t2.?sfatsat|t2w?.*fat.?sat|t2.*\bfs\b", "t2sfatsat"),
+        (r"t1.?wfatsat|t1w?.*fat.?sat|t1.*\bfs\b", "t1wfatsat"),
+        (r"t2\*|t2star|t2.?star", "t2star"),
+        (r"\bstir\b", "stir"),
+        (r"\bflair\b", "flair"),
+        (r"\bdwi\b|diffusion", "dwi"),
+        (r"\bfunc\b|bold|fmri", "func"),
+        (r"\bin.?phase\b|inphase", "inphase"),
+        (r"\bout.?phase\b|outphase|opposed", "outphase"),
+        (r"\bfat\b", "fat"),
+        (r"\bwater\b", "water"),
         (r"\bt2w?\b", "t2w"),
-        (r"\bt1w?\b", "t1"),
+        (r"\bt1w?\b", "t1w"),
     ]
     for pattern, typ in checks:
         if re.search(pattern, text):
@@ -209,10 +288,10 @@ def extract_meta(nifti_path: Path) -> ScanMeta:
         protocol=str(sidecar.get("ProtocolName") or sidecar.get("Protocol") or ""),
         series=str(sidecar.get("SeriesDescription") or ""),
         subject_id=subject,
-        session_date=session,
+        session_id=session,
         sidecar=sidecar,
         guess_acq=_guess_acq(sidecar, path),
         guess_voi=_guess_voi(sidecar, path),
-        guess_desc=_guess_desc(sidecar, path),
+        guess_ce=_guess_ce(sidecar, path),
         guess_type=_guess_type(sidecar, path),
     )
