@@ -2,7 +2,7 @@
 
 Desktop GUI for labeling MRI NIfTI scans and saving them into a lab BIDS-like layout.
 
-![MRI Sorting Tool GUI](docs/gui-screenshot.png)
+![MRI Sorting Tool GUI](docs/gui-screenshot-ce-labels.png)
 
 *Beta UI: orthogonal viewers with stretch slider; optional Subject/Session IDs; Acq / VOI / CE / Type labels.*
 
