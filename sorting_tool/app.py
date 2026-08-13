@@ -113,9 +113,10 @@ class MainWindow(QMainWindow):
         self.json_view.setPlaceholderText("JSON sidecar contents will appear here…")
         mono = QFont("Menlo")
         mono.setStyleHint(QFont.StyleHint.Monospace)
-        mono.setPointSize(11)
+        mono.setPointSize(10)
         self.json_view.setFont(mono)
-        self.json_view.setMinimumHeight(180)
+        # Fill leftover side-panel space; scroll inside the box for long JSON
+        self.json_view.setMinimumHeight(100)
         self.json_view.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
@@ -126,7 +127,7 @@ class MainWindow(QMainWindow):
         self.session_edit.setPlaceholderText("Session ID (optional free text)")
 
         self.acq_row = RadioRow("Acq", ACQ_OPTIONS, columns=3)
-        self.voi_row = RadioRow("VOI", VOI_OPTIONS, columns=3)
+        self.voi_row = RadioRow("VOI", VOI_OPTIONS, columns=4)
         self.ce_row = RadioRow("CE", CE_OPTIONS, columns=2)
         self.type_row = RadioRow("Type", TYPE_OPTIONS, columns=4)
 
@@ -135,7 +136,7 @@ class MainWindow(QMainWindow):
         self.next_btn = QPushButton("Next Image Button")
         self.save_btn = QPushButton("Save Image to BIDS")
         for btn in (self.prev_btn, self.next_btn, self.save_btn):
-            btn.setMinimumHeight(40)
+            btn.setMinimumHeight(32)
             btn.setStyleSheet(
                 "background-color: #2b6cb0; color: white; font-weight: bold;"
             )
@@ -146,6 +147,8 @@ class MainWindow(QMainWindow):
 
         meta_inner = QWidget()
         meta_layout = QVBoxLayout(meta_inner)
+        meta_layout.setSpacing(4)
+        meta_layout.setContentsMargins(6, 6, 6, 6)
         meta_layout.addWidget(QLabel("<b>File name</b>"))
         meta_layout.addWidget(self.filename_label)
         meta_layout.addWidget(self.protocol_label)
