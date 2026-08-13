@@ -39,8 +39,6 @@ You should see `(.venv)` at the start of your prompt.
 
 ### 2. Launch the tool
 
-**Option A — interactive PATH prompts in the terminal**
-
 ```bash
 sorting-tool
 ```
@@ -54,29 +52,10 @@ The terminal will ask:
 
 Then the GUI window opens.
 
-**Option B — pass the input folder PATH and output folder PATH as flags**
-
-```bash
-sorting-tool --input /INPUT/FOLDER/PATH --output /OUTPUT/FOLDER/PATH
-```
-
-| Argument | Meaning |
-|----------|---------|
-| `--input` / `-i` | **Input folder PATH** — root of the dataset to label (searched recursively for `.nii` / `.nii.gz`). The last component of this path becomes the top-level dataset name in the output. |
-| `--output` / `-o` | **Output folder PATH** — parent directory for results. Saved scans go under `/OUTPUT/FOLDER/PATH/<input_folder_name>/...`. |
-
-Example:
-
-```bash
-sorting-tool \
-  --input /Users/you/data/TestData \
-  --output /Users/you/data/sorted
-```
-
-This **copies** files to:
+Sorted copies are written under:
 
 ```text
-/Users/you/data/sorted/TestData/sub-<ID>/ses-<sessionid>/...
+/OUTPUT/FOLDER/PATH/<input_folder_name>/sub-<ID>/ses-<sessionid>/...
 ```
 
 Original files under the input folder PATH are never modified or moved.
