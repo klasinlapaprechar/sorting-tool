@@ -1,4 +1,34 @@
-"""Extract subject / session / protocol metadata and label guesses."""
+"""
+metadata.py
+===========
+Extract subject / session / protocol metadata and heuristic label guesses
+from a NIfTI path plus its JSON sidecar (if present).
+
+HOW THIS FITS IN
+----------------
+app.MainWindow.load_index()
+    → extract_meta(path)
+        → ScanMeta (IDs, protocol/series text, guess_acq/voi/ce/type)
+    → GUI prefills Subject/Session fields and radio rows from guesses
+
+bids.save_to_bids() uses ``sidecar_for()`` only to locate the source JSON
+for copying into the destination sidecar (labels themselves come from GUI).
+
+Label option lists (``ACQ_OPTIONS``, ``VOI_OPTIONS``, …) drive the GUI
+radio buttons in ``app.RadioRow``.
+
+HOW TO EXTEND
+-------------
+* Add a new Acq / VOI / CE / Type choice: append to the matching ``*_OPTIONS``
+  list and update README / GUI; extend the corresponding ``_guess_*`` if
+  you want auto-suggest.
+* Improve subject/session detection: edit ``_subject_from_*`` /
+  ``_session_from_*`` (sidecar keys first, then path heuristics).
+* Support another sidecar naming scheme: change ``sidecar_for()``.
+* Date formats expected: ISO ``YYYY-MM-DD``, compact ``YYYYMMDD``, or
+  US-style ``MMDDYYYY`` (normalized via ``_normalize_date_digits``).
+* Keep guesses best-effort — never raise for unknown labels; return None.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +36,8 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# --- GUI / BIDS label vocabularies (must stay in sync with README tables) ---
 
 ACQ_OPTIONS = ["axial", "sagittal", "coronal"]
 
@@ -58,6 +90,7 @@ TYPE_OPTIONS = [
     "outphase",
 ]
 
+# Path/filename patterns for subject and session heuristics.
 _SUB_RE = re.compile(r"(?:^|[/_\-])sub-([A-Za-z0-9]+)", re.IGNORECASE)
 _DATE_ISO = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 _DATE_COMPACT = re.compile(r"(?<!\d)(\d{8})(?!\d)")
@@ -65,6 +98,23 @@ _DATE_COMPACT = re.compile(r"(?<!\d)(\d{8})(?!\d)")
 
 @dataclass
 class ScanMeta:
+    """
+    Aggregated metadata for one NIfTI scan shown in the labeling GUI.
+
+    Attributes
+    ----------
+    path :
+        Absolute path to the source NIfTI (never modified by the tool).
+    protocol, series :
+        Human-readable strings from the sidecar for the side panel.
+    subject_id, session_id :
+        Prefill for optional free-text fields (often YYYYMMDD for session).
+    sidecar :
+        Parsed JSON dict (empty if no sidecar).
+    guess_* :
+        Heuristic label suggestions; None when unknown.
+    """
+
     path: Path
     protocol: str = ""
     series: str = ""
@@ -78,6 +128,12 @@ class ScanMeta:
 
 
 def sidecar_for(nifti_path: Path) -> Path | None:
+    """
+    Return the sibling ``.json`` path for a NIfTI, or None if missing.
+
+    Strips ``.nii.gz`` / ``.nii`` carefully so ``foo.nii.gz`` → ``foo.json``
+    (not ``foo.nii.json``).
+    """
     nifti_path = Path(nifti_path)
     name = nifti_path.name
     if name.endswith(".nii.gz"):
@@ -91,6 +147,7 @@ def sidecar_for(nifti_path: Path) -> Path | None:
 
 
 def load_sidecar(nifti_path: Path) -> dict:
+    """Load and parse the JSON sidecar; return ``{}`` if none exists."""
     path = sidecar_for(nifti_path)
     if path is None:
         return {}
@@ -99,6 +156,7 @@ def load_sidecar(nifti_path: Path) -> dict:
 
 
 def _subject_from_sidecar(sidecar: dict) -> str:
+    """Prefer DICOM-style ID fields; strip ``sub-`` prefix and caret spaces."""
     for key in ("PatientID", "PatientName", "Subject", "subject_id"):
         val = sidecar.get(key)
         if val is None:
@@ -106,6 +164,7 @@ def _subject_from_sidecar(sidecar: dict) -> str:
         text = str(val).strip()
         if not text:
             continue
+        # DICOM PatientName often uses ^ separators; drop them for BIDS ids.
         text = text.replace("^", "").replace(" ", "")
         if text.lower().startswith("sub-"):
             text = text[4:]
@@ -114,6 +173,7 @@ def _subject_from_sidecar(sidecar: dict) -> str:
 
 
 def _subject_from_path(path: Path) -> str:
+    """Fall back to ``sub-<id>`` folder names or path substrings."""
     for part in reversed(path.parts):
         m = re.match(r"sub-([A-Za-z0-9]+)$", part, re.IGNORECASE)
         if m:
@@ -125,10 +185,17 @@ def _subject_from_path(path: Path) -> str:
 
 
 def _date_to_yyyymmdd(year: str, month: str, day: str) -> str:
+    """Assemble a compact session date string ``YYYYMMDD``."""
     return f"{year}{month}{day}"
 
 
 def _normalize_date_digits(digits: str) -> str:
+    """
+    Normalize an 8-digit date to ``YYYYMMDD``.
+
+    If the string already starts with 19/20, treat as YYYYMMDD.
+    Otherwise assume MMDDYYYY and rearrange.
+    """
     if len(digits) != 8:
         return digits
     if digits.startswith(("19", "20")):
@@ -137,6 +204,7 @@ def _normalize_date_digits(digits: str) -> str:
 
 
 def _session_from_sidecar(sidecar: dict) -> str:
+    """Pull acquisition/study date from common sidecar keys → YYYYMMDD."""
     for key in (
         "AcquisitionDateTime",
         "AcquisitionDate",
@@ -157,6 +225,7 @@ def _session_from_sidecar(sidecar: dict) -> str:
 
 
 def _session_from_path(path: Path) -> str:
+    """Use ``ses-<id>`` path parts or an 8-digit date in the filename."""
     for part in path.parts:
         m = re.match(r"ses-([A-Za-z0-9]+)", part, re.IGNORECASE)
         if m:
@@ -172,6 +241,7 @@ def _session_from_path(path: Path) -> str:
 
 
 def _guess_acq(sidecar: dict, path: Path) -> str | None:
+    """Guess acquisition plane from orientation / description / filename."""
     text = " ".join(
         str(sidecar.get(k, ""))
         for k in ("ImageOrientationText", "SeriesDescription", "ProtocolName")
@@ -187,6 +257,13 @@ def _guess_acq(sidecar: dict, path: Path) -> str | None:
 
 
 def _guess_voi(sidecar: dict, path: Path) -> str | None:
+    """
+    Guess volume-of-interest anatomy from description / body part / name.
+
+    Mapping order matters: more specific spine compounds (cervicothoracic,
+    thoracolumbar, fullspine) are checked before generic cervical/thoracic/
+    lumbar so shorter patterns do not win first.
+    """
     text = " ".join(
         str(sidecar.get(k, ""))
         for k in ("SeriesDescription", "ProtocolName", "BodyPartExamined")
@@ -226,6 +303,7 @@ def _guess_voi(sidecar: dict, path: Path) -> str | None:
 
 
 def _guess_ce(sidecar: dict, path: Path) -> str | None:
+    """Guess contrast enhancement (``true`` / ``false``) from protocol text."""
     text = " ".join(
         str(sidecar.get(k, "")) for k in ("SeriesDescription", "ProtocolName")
     ).lower()
@@ -238,7 +316,16 @@ def _guess_ce(sidecar: dict, path: Path) -> str | None:
 
 
 def _guess_type(sidecar: dict, path: Path) -> str | None:
+    """
+    Guess BIDS-like suffix / contrast type.
+
+    Prefer longest ``TYPE_OPTIONS`` tokens found as ``_token.`` / ``_token_``
+    in the filename so ``mtoff_MTS`` wins over shorter fragments. Then try
+    common capitalized filename tokens, then sidecar/protocol regexes.
+    """
     name = path.name
+    # Longest-first avoids matching ``t1w`` inside ``t1w_MTS`` incorrectly
+    # when a longer option is present as its own entity.
     ordered = sorted(TYPE_OPTIONS, key=len, reverse=True)
     for t in ordered:
         if re.search(rf"(?:^|_){re.escape(t)}(?:\.|_)", name, re.IGNORECASE):
@@ -279,6 +366,12 @@ def _guess_type(sidecar: dict, path: Path) -> str | None:
 
 
 def extract_meta(nifti_path: Path) -> ScanMeta:
+    """
+    Build a ``ScanMeta`` for ``nifti_path`` (sidecar + path heuristics).
+
+    Subject/session prefer sidecar fields, then path. Guesses never raise;
+    missing values stay empty / None for the user to fill in the GUI.
+    """
     path = Path(nifti_path).resolve()
     sidecar = load_sidecar(path)
     subject = _subject_from_sidecar(sidecar) or _subject_from_path(path)

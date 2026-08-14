@@ -1,4 +1,32 @@
-"""Main PyQt6 window for MRI sorting / BIDS labeling."""
+"""
+app.py
+======
+Main PyQt6 window for MRI sorting / BIDS labeling.
+
+HOW THIS FITS IN
+----------------
+__main__.main() / console script
+    → run_app(input_dir, output_dir)
+        → discovery.discover_scans()
+        → MainWindow
+            → viewer.OrthoViewer (left)
+            → metadata.extract_meta + label radios (right)
+            → bids.save_to_bids on Save
+
+This is the orchestration layer: it does not invent filenames (``bids``)
+or scan discovery (``discovery``); it wires UI events to those modules.
+
+HOW TO EXTEND
+-------------
+* Add a label field: create another ``RadioRow`` (or line edit), pass it into
+  ``save_to_bids`` (via ``labels=`` or a new kwarg), and update ``metadata``
+  option lists / README.
+* Change post-save navigation: edit the loop at the end of ``save_scan``.
+* Dataset naming: today ``dataset_name = input_dir.name``; override in
+  ``MainWindow.__init__`` if you need a custom folder name.
+* File dialogs when CLI paths are omitted: ``prompt_directories``.
+* Keep save copy-only — never write back to the input tree from this file.
+"""
 
 from __future__ import annotations
 
@@ -47,6 +75,18 @@ class RadioRow(QWidget):
     """Single-select group styled as a row of options."""
 
     def __init__(self, title: str, options: list[str], columns: int = 4, parent=None):
+        """
+        Build a labeled grid of exclusive radio buttons.
+
+        Parameters
+        ----------
+        title :
+            Field name shown to the left (e.g. ``Acq``).
+        options :
+            Button labels; must match values accepted by ``bids`` / README.
+        columns :
+            Grid column count before wrapping to the next row.
+        """
         super().__init__(parent)
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
@@ -64,10 +104,17 @@ class RadioRow(QWidget):
         self._options = options
 
     def selected(self) -> str | None:
+        """Return the checked option text, or None if nothing selected."""
         btn = self.group.checkedButton()
         return btn.text() if btn else None
 
     def set_selected(self, value: str | None) -> None:
+        """
+        Select the button matching ``value`` (case-insensitive), or clear all.
+
+        Temporarily disables exclusivity so every button can be unchecked
+        when applying a new guess / clearing the selection.
+        """
         self.group.setExclusive(False)
         for btn in self.group.buttons():
             btn.setChecked(False)
@@ -81,7 +128,15 @@ class RadioRow(QWidget):
 
 
 class MainWindow(QMainWindow):
+    """Primary GUI: ortho viewer + metadata/labels + Previous/Next/Save."""
+
     def __init__(self, input_dir: Path, output_dir: Path, scans: list[Path]):
+        """
+        Construct the window for an already-discovered scan list.
+
+        ``dataset_out`` is ``<output>/<input_folder_name>/``, matching the
+        folder ``bids.save_to_bids`` writes into and where progress is stored.
+        """
         super().__init__()
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
@@ -192,6 +247,13 @@ class MainWindow(QMainWindow):
             self.status_label.setText("No NIfTI scans found.")
 
     def load_index(self, idx: int) -> None:
+        """
+        Load scan ``idx`` into the viewer and refresh metadata / label guesses.
+
+        On NIfTI load failure the viewer is cleared and a dialog is shown;
+        navigation still leaves ``self.index`` on the failed item so the user
+        can skip with Next.
+        """
         if not self.scans:
             return
         self.index = max(0, min(idx, len(self.scans) - 1))
@@ -222,6 +284,7 @@ class MainWindow(QMainWindow):
         self.session_edit.setText(meta.session_id)
         self.acq_row.set_selected(meta.guess_acq)
         self.voi_row.set_selected(meta.guess_voi)
+        # Default CE to false when the heuristic has no opinion (required field).
         self.ce_row.set_selected(meta.guess_ce or "false")
         self.type_row.set_selected(meta.guess_type)
 
@@ -232,6 +295,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"MRI Sorting Tool — {path.name}")
 
     def _show_sidecar(self, nifti_path: Path, sidecar: dict) -> None:
+        """Populate the read-only JSON panel from the sibling sidecar file."""
         json_path = sidecar_for(nifti_path)
         if json_path is None:
             self.json_view.setPlainText("(no JSON sidecar found for this scan)")
@@ -248,14 +312,23 @@ class MainWindow(QMainWindow):
         self.json_view.moveCursor(QTextCursor.MoveOperation.Start)
 
     def prev_scan(self) -> None:
+        """Go to the previous scan in the discovered list (if any)."""
         if self.index > 0:
             self.load_index(self.index - 1)
 
     def next_scan(self) -> None:
+        """Go to the next scan in the discovered list (if any)."""
         if self.index < len(self.scans) - 1:
             self.load_index(self.index + 1)
 
     def save_scan(self) -> None:
+        """
+        Copy the current scan into the BIDS tree using the selected labels.
+
+        On success, jumps to the next scan that is not yet marked saved;
+        if all remaining are saved, reloads the current index (to refresh
+        the ``[already saved]`` status).
+        """
         if self.current_meta is None:
             return
         acq = self.acq_row.selected()
@@ -285,6 +358,7 @@ class MainWindow(QMainWindow):
             return
 
         QMessageBox.information(self, "Saved", f"Copied to:\n{dest}")
+        # Prefer advancing to the next unsaved scan to speed batch labeling.
         for j in range(self.index + 1, len(self.scans)):
             if not is_saved(self.dataset_out, self.scans[j]):
                 self.load_index(j)
@@ -293,6 +367,12 @@ class MainWindow(QMainWindow):
 
 
 def prompt_directories() -> tuple[Path, Path] | None:
+    """
+    Ask for input and output folders via native dialogs.
+
+    Returns None if the user cancels either dialog. Ensures a QApplication
+    exists so dialogs can run when ``run_app`` was called without paths.
+    """
     QApplication.instance() or QApplication([])
     in_dir = QFileDialog.getExistingDirectory(None, "Select INPUT folder (scans)")
     if not in_dir:
@@ -304,6 +384,12 @@ def prompt_directories() -> tuple[Path, Path] | None:
 
 
 def run_app(input_dir: Path | None = None, output_dir: Path | None = None) -> int:
+    """
+    Discover scans and start the Qt event loop with ``MainWindow``.
+
+    Returns the ``QApplication.exec()`` exit code, or 1 on cancel / empty
+    input / missing directory.
+    """
     import sys
 
     app = QApplication.instance() or QApplication(sys.argv)

@@ -1,4 +1,14 @@
-"""Unit tests for metadata extraction and BIDS path building."""
+"""
+test_metadata_bids.py
+=====================
+Unit tests for scan discovery, metadata heuristics, and BIDS path/save logic.
+
+Run from the repo root (with venv active)::
+
+    python -m unittest discover -s tests -v
+
+Some tests need the optional Summer_Data TestData tree; they skip if absent.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +25,8 @@ TESTDATA = Path("/Users/kla/LAB/Summer_Data/TestData")
 
 
 class TestDiscovery(unittest.TestCase):
+    """discover_scans finds NIfTI files under the lab TestData tree."""
+
     def test_discovers_testdata(self):
         if not TESTDATA.is_dir():
             self.skipTest("TestData not present")
@@ -23,6 +35,8 @@ class TestDiscovery(unittest.TestCase):
 
 
 class TestMetadata(unittest.TestCase):
+    """extract_meta pulls subject / protocol / type guesses from path+sidecar."""
+
     def test_subject_from_folder(self):
         if not TESTDATA.is_dir():
             self.skipTest("TestData not present")
@@ -37,6 +51,8 @@ class TestMetadata(unittest.TestCase):
 
 
 class TestBids(unittest.TestCase):
+    """build_stem / build_bids_paths / save_to_bids naming and copy-only saves."""
+
     def test_stem_order_and_ce(self):
         stem = build_stem(
             "subjectid",
@@ -52,17 +68,20 @@ class TestBids(unittest.TestCase):
         )
 
     def test_optional_sub_ses_omitted_from_filename(self):
+        # Blank IDs must not appear as sub-/ses- entities in the stem.
         stem = build_stem("", "", "sagittal", "brain", "true", "t2w")
         self.assertEqual(stem, "acq-sagittal_voi-brain_ce-true_t2w")
         self.assertNotIn("sub-", stem)
         self.assertNotIn("ses-", stem)
 
     def test_underscore_suffix(self):
+        # Suffixes like mtoff_MTS keep their underscore.
         stem = build_stem("X1", "20220812", "axial", "cervicalspine", "false", "mtoff_MTS")
         self.assertTrue(stem.endswith("_mtoff_MTS"))
         self.assertIn("_ce-false_", stem)
 
     def test_path_and_save_copy_only(self):
+        # Save copies NIfTI + writes new JSON; source mtimes must not change.
         if not TESTDATA.is_dir():
             self.skipTest("TestData not present")
         src = TESTDATA / "sub-amuAL" / "anat" / "sub-amuAL_T2w.nii.gz"
@@ -107,6 +126,7 @@ class TestBids(unittest.TestCase):
             if src_json_mtime is not None:
                 self.assertEqual(src_json.stat().st_mtime_ns, src_json_mtime)
 
+            # Second identical save should collide and insert _run-1_.
             dest2 = save_to_bids(
                 source_nii=src,
                 output_dir=out,
@@ -121,6 +141,7 @@ class TestBids(unittest.TestCase):
             self.assertIn("_run-1_", dest2.name)
 
     def test_blank_ids_use_unknown_folders(self):
+        # Folders fall back to sub-unknown / ses-unknown when IDs are blank.
         nii, _ = build_bids_paths(
             Path(tempfile.gettempdir()),
             "MyDataset",

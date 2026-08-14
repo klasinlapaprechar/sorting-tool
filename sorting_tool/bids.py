@@ -1,4 +1,36 @@
-"""Build BIDS-like destinations and save labeled scans (copy-only)."""
+"""
+bids.py
+=======
+Build BIDS-like destination paths and **copy** labeled scans into the
+output tree (never move or overwrite source files).
+
+HOW THIS FITS IN
+----------------
+app.MainWindow.save_scan()
+    → save_to_bids(...)
+        → build_bids_paths() / build_stem()
+        → shutil.copy2(source → dest)
+        → write new dest JSON with SortingTool block
+        → discovery.mark_saved()
+
+Folder layout::
+
+    <output>/<dataset>/sub-<id|unknown>/ses-<id|unknown>/
+        [sub-…]_[ses-…]_acq-…_voi-…_ce-true|false[_run-N]_<suffix>.nii.gz
+        …same stem….json
+
+HOW TO EXTEND
+-------------
+* Change filename entity order: edit ``build_stem()``.
+* Add a new entity (e.g. ``desc-``): update stem builder + ``save_to_bids``
+  payload and the GUI; remember lab policy currently omits ``desc-``.
+* Change collision handling: adjust the ``_run-N`` loop in ``build_bids_paths``.
+* Destination sidecar ``SortingTool`` keys today::
+
+      source, dataset, subject_id, session_id, acq, voi, ce, type
+      (+ optional extra keys from the ``labels`` dict argument)
+* Keep copy-only: never ``unlink`` / rewrite the source NIfTI or its JSON.
+"""
 
 from __future__ import annotations
 
@@ -38,6 +70,11 @@ def folder_id(value: str, default: str = "unknown") -> str:
 
 
 def normalize_ce(value: str) -> str:
+    """
+    Normalize contrast-enhancement to the strings ``true`` or ``false``.
+
+    Accepts common aliases (1/0, yes/no). Raises ``ValueError`` otherwise.
+    """
     text = str(value).strip().lower()
     if text in {"true", "1", "yes"}:
         return "true"
@@ -47,6 +84,7 @@ def normalize_ce(value: str) -> str:
 
 
 def _nii_extension(source_nii: Path) -> str:
+    """Preserve ``.nii.gz`` vs ``.nii`` on the destination copy."""
     name = source_nii.name.lower()
     if name.endswith(".nii.gz"):
         return ".nii.gz"
@@ -63,9 +101,14 @@ def build_stem(
     run: int | None = None,
 ) -> str:
     """
-    sub-<id>_ses-<id>_acq-<acq>_voi-<voi>_ce-<true|false>[_run-N]_<suffix>
+    Build the BIDS-like filename stem (no extension).
 
-    Subject and session are omitted from the filename when blank.
+    Pattern::
+
+        sub-<id>_ses-<id>_acq-<acq>_voi-<voi>_ce-<true|false>[_run-N]_<suffix>
+
+    Subject and session entities are omitted from the filename when blank
+    (folders still use ``sub-unknown`` / ``ses-unknown`` via ``folder_id``).
     """
     parts: list[str] = []
     sub = sanitize_optional_id(subject_id)
@@ -86,6 +129,12 @@ def build_stem(
 
 
 def dataset_root(output_dir: Path, dataset_name: str) -> Path:
+    """
+    Return ``<output_dir>/<dataset_name>`` (basename only for safety).
+
+    Using ``Path(...).name`` strips any accidental directory components so
+    a pasted path cannot escape the output parent.
+    """
     name = Path(str(dataset_name).strip()).name
     if not name:
         raise ValueError("dataset name is required")
@@ -103,7 +152,12 @@ def build_bids_paths(
     scan_type: str,
     ext: str = ".nii.gz",
 ) -> tuple[Path, Path]:
-    """Return (nii_dest, json_dest) under <output>/<dataset>/sub-*/ses-*/."""
+    """
+    Return ``(nii_dest, json_dest)`` under ``<output>/<dataset>/sub-*/ses-*/``.
+
+    Creates the session directory if needed. If the default stem already
+    exists, inserts ``_run-1``, ``_run-2``, … until a free name is found.
+    """
     root = dataset_root(output_dir, dataset_name)
     if not str(scan_type).strip():
         raise ValueError("scan type is required")
@@ -119,6 +173,7 @@ def build_bids_paths(
     if not nii.exists():
         return nii, js
 
+    # Collision: keep incrementing run until both names are free.
     run = 1
     while True:
         nii, js = paths(run)
@@ -139,15 +194,22 @@ def save_to_bids(
     scan_type: str,
     labels: dict | None = None,
 ) -> Path:
-    """Copy NIfTI into BIDS layout; write a new sidecar at the destination.
+    """
+    Copy NIfTI into BIDS layout; write a new sidecar at the destination.
 
     Never modifies the source NIfTI or its original JSON sidecar.
     Subject and session IDs are optional free-text strings.
+
+    Returns
+    -------
+    Path
+        Absolute path of the destination NIfTI copy.
     """
     source_nii = Path(source_nii).resolve()
     if not source_nii.is_file():
         raise FileNotFoundError(source_nii)
 
+    # Validate required GUI labels before touching the filesystem.
     missing = []
     if not acq:
         missing.append("Acq")
@@ -175,8 +237,10 @@ def save_to_bids(
         ext=ext,
     )
 
+    # Copy only — source mtime/content stay untouched.
     shutil.copy2(source_nii, dest_nii)
 
+    # Start from a copy of the source sidecar (if any), then add our block.
     payload: dict = {}
     src_json = sidecar_for(source_nii)
     if src_json is not None:
@@ -198,6 +262,7 @@ def save_to_bids(
     with dest_json.open("w") as f:
         json.dump(payload, f, indent=2)
 
+    # Progress is stored under the dataset root (same place the GUI checks).
     root = dataset_root(output_dir, dataset_name)
     mark_saved(root, source_nii, dest_nii)
     return dest_nii

@@ -1,4 +1,32 @@
-"""Orthogonal MRI viewports with slice, brightness, stretch amount, and zoom/pan."""
+"""
+viewer.py
+=========
+Orthogonal MRI viewports (axial / sagittal / coronal) with slice,
+brightness, stretch-amount, zoom, and pan controls.
+
+HOW THIS FITS IN
+----------------
+app.MainWindow builds one ``OrthoViewer`` on the left side of the window.
+On each scan load::
+
+    nibabel load → numpy volume + voxel zooms
+        → OrthoViewer.set_volume(data, zooms)
+            → three PlaneView widgets (axes 2 / 0 / 1)
+
+Interaction stays local to this module; labeling / save lives in ``app`` /
+``bids``.
+
+HOW TO EXTEND
+-------------
+* Change default windowing: edit percentile / brightness math in
+  ``PlaneView._rebuild_base``.
+* Add a fourth plane or MIP: extend ``OrthoViewer`` layout.
+* Different zoom limits: clip range in ``handle_wheel`` (currently 0.5–8×).
+* Aspect / stretch behavior: ``_target_size`` blends KeepAspectRatio vs
+  IgnoreAspectRatio using the global Stretch slider (0=Fit, 1=Fill).
+* Voxel-size correction uses ``scipy.ndimage.zoom`` on the 2D plane so
+  anisotropic voxels look roughly isotropic on screen.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +47,7 @@ class ImageCanvas(QLabel):
     """Image label that forwards wheel / drag / double-click for zoom and pan."""
 
     def __init__(self, owner: "PlaneView", title: str):
+        """Bind this canvas to its parent ``PlaneView`` for gesture handling."""
         super().__init__(title)
         self._owner = owner
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -32,10 +61,12 @@ class ImageCanvas(QLabel):
         self._last_pos: QPoint | None = None
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+        """Scroll-wheel zoom (delegated to ``PlaneView.handle_wheel``)."""
         self._owner.handle_wheel(event)
         event.accept()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        """Start left-button pan tracking."""
         if event.button() == Qt.MouseButton.LeftButton:
             self._dragging = True
             self._last_pos = event.position().toPoint()
@@ -44,6 +75,7 @@ class ImageCanvas(QLabel):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        """Accumulate pan deltas while dragging."""
         if self._dragging and self._last_pos is not None:
             pos = event.position().toPoint()
             delta = pos - self._last_pos
@@ -54,6 +86,7 @@ class ImageCanvas(QLabel):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        """End pan on left-button release."""
         if event.button() == Qt.MouseButton.LeftButton:
             self._dragging = False
             self._last_pos = None
@@ -62,6 +95,7 @@ class ImageCanvas(QLabel):
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        """Double-click resets zoom and pan for this plane."""
         if event.button() == Qt.MouseButton.LeftButton:
             self._owner.reset_view()
             event.accept()
@@ -73,11 +107,13 @@ class PlaneView(QWidget):
     """One plane: image, slice slider, brightness slider, zoom/pan."""
 
     def __init__(self, title: str, parent=None):
+        """Build widgets for a single orthogonal plane."""
         super().__init__(parent)
         self.title = title
         self._volume: np.ndarray | None = None
         self._axis = 0
         self._slice_count = 1
+        # Voxel sizes (mm) along displayed row/col — used for anisotropic zoom.
         self._row_zoom = 1.0
         self._col_zoom = 1.0
         self._zoom = 1.0
@@ -125,6 +161,12 @@ class PlaneView(QWidget):
         row_mm: float = 1.0,
         col_mm: float = 1.0,
     ) -> None:
+        """
+        Attach a 3D volume and which axis this plane scrolls along.
+
+        ``row_mm`` / ``col_mm`` are voxel spacings for the two in-plane axes
+        so anisotropic acquisitions render with roughly correct aspect.
+        """
         self._volume = np.asarray(volume)
         self._axis = axis
         self._row_zoom = max(float(row_mm), 1e-6)
@@ -133,6 +175,7 @@ class PlaneView(QWidget):
         self._zoom = 1.0
         self._pan_x = 0.0
         self._pan_y = 0.0
+        # blockSignals avoids a double-refresh while we set max + mid-slice.
         self.slice_slider.blockSignals(True)
         self.slice_slider.setMaximum(self._slice_count - 1)
         self.slice_slider.setValue(self._slice_count // 2)
@@ -141,6 +184,7 @@ class PlaneView(QWidget):
         self._refresh()
 
     def clear(self) -> None:
+        """Drop volume data and show the plane title placeholder."""
         self._volume = None
         self._base_img = None
         self._zoom = 1.0
@@ -150,12 +194,14 @@ class PlaneView(QWidget):
         self.image_label.setPixmap(QPixmap())
 
     def reset_view(self) -> None:
+        """Reset interactive zoom/pan (Stretch slider is unchanged)."""
         self._zoom = 1.0
         self._pan_x = 0.0
         self._pan_y = 0.0
         self._refresh()
 
     def handle_wheel(self, event: QWheelEvent) -> None:
+        """Zoom toward the cursor so the pointed anatomy stays under the mouse."""
         if self._base_img is None:
             return
         delta = event.angleDelta().y()
@@ -164,6 +210,7 @@ class PlaneView(QWidget):
         factor = 1.15 if delta > 0 else 1 / 1.15
         new_zoom = float(np.clip(self._zoom * factor, 0.5, 8.0))
 
+        # Convert cursor → content coords, apply zoom, then re-anchor pan.
         pos = event.position()
         lw = max(self.image_label.width(), 1)
         lh = max(self.image_label.height(), 1)
@@ -175,6 +222,7 @@ class PlaneView(QWidget):
         self._refresh()
 
     def handle_pan(self, dx: int, dy: int) -> None:
+        """Shift the drawn pixmap by pixel deltas from a drag."""
         if self._base_img is None:
             return
         self._pan_x += dx
@@ -182,10 +230,17 @@ class PlaneView(QWidget):
         self._refresh()
 
     def _on_slice_or_bright(self) -> None:
+        """Rebuild the 8-bit base image when slice or brightness changes."""
         self._rebuild_base()
         self._refresh()
 
     def _rebuild_base(self) -> None:
+        """
+        Extract one slice, window to 8-bit, flip for display, apply voxel zoom.
+
+        Windowing uses 1st–99th percentiles, then brightness widens/narrows
+        the half-range around the midpoint (slider 50 ≈ identity).
+        """
         if self._volume is None:
             self._base_img = None
             return
@@ -207,6 +262,7 @@ class PlaneView(QWidget):
             if hi <= lo:
                 hi = lo + 1.0
 
+        # brightness 50 → factor 1.0; lower values widen the window (darker mid).
         bright = self.brightness_slider.value() / 50.0
         mid = (lo + hi) / 2.0
         half = (hi - lo) / 2.0 / max(bright, 0.05)
@@ -214,6 +270,7 @@ class PlaneView(QWidget):
 
         norm = np.clip((plane - lo_w) / (hi_w - lo_w), 0, 1)
         img8 = (norm * 255).astype(np.uint8)
+        # Radiology convention: flip so "up" on screen matches expected anatomy.
         img8 = np.flipud(img8)
 
         min_mm = min(self._row_zoom, self._col_zoom)
@@ -242,6 +299,7 @@ class PlaneView(QWidget):
         return max(w, 1), max(h, 1)
 
     def _refresh(self) -> None:
+        """Paint the current base image with stretch, zoom, and pan applied."""
         if self._base_img is None:
             if self._volume is not None:
                 self.image_label.setText("empty")
@@ -249,6 +307,7 @@ class PlaneView(QWidget):
 
         img8 = self._base_img
         h, w = img8.shape
+        # .copy() so QImage owns its buffer after numpy may reallocate.
         qimg = QImage(img8.data, w, h, w, QImage.Format.Format_Grayscale8).copy()
         pix = QPixmap.fromImage(qimg)
 
@@ -276,6 +335,7 @@ class PlaneView(QWidget):
         self.image_label.setPixmap(canvas)
 
     def resizeEvent(self, event):  # noqa: N802
+        """Re-fit the pixmap when the widget is resized."""
         super().resizeEvent(event)
         self._refresh()
 
@@ -284,6 +344,7 @@ class OrthoViewer(QWidget):
     """Stacked Axial / Sagittal / Coronal views with a global stretch slider."""
 
     def __init__(self, parent=None):
+        """Create three plane views and a shared Fit↔Fill stretch control."""
         super().__init__(parent)
         self.axial = PlaneView("Axial Image")
         self.sagittal = PlaneView("Sagittal Image")
@@ -312,6 +373,7 @@ class OrthoViewer(QWidget):
         layout.addWidget(self.coronal, stretch=1)
 
     def _on_stretch(self, value: int) -> None:
+        """Propagate Stretch slider (0–100%) to all three planes."""
         self.stretch_value.setText(f"{value}%")
         amount = value / 100.0
         for plane in self._planes:
@@ -322,6 +384,12 @@ class OrthoViewer(QWidget):
         data: np.ndarray,
         zooms: tuple[float, float, float] | None = None,
     ) -> None:
+        """
+        Display a 3D (or 4D→first volume) array across the three planes.
+
+        Axis mapping matches typical NIfTI array order: axial scrolls dim 2,
+        sagittal dim 0, coronal dim 1. Zooms are (x, y, z) voxel sizes in mm.
+        """
         vol = np.asarray(data)
         if vol.ndim > 3:
             vol = vol[..., 0]
@@ -337,5 +405,6 @@ class OrthoViewer(QWidget):
             plane.set_stretch(amount)
 
     def clear(self) -> None:
+        """Clear all three plane views (e.g. after a load failure)."""
         for plane in self._planes:
             plane.clear()

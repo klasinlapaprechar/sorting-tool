@@ -16,13 +16,17 @@ Desktop GUI for labeling MRI NIfTI scans and saving them into a lab BIDS-like la
 ## Install (any machine)
 
 ```bash
-git clone https://github.com/klasinlapaprechar/sorting-tool.git
-cd sorting-tool
+git clone https://github.com/NeuromuscularInsightLab/clinicalDICOM2BIDS-sorting-tool.git
+cd clinicalDICOM2BIDS-sorting-tool
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 pip install -e .
 ```
+
+## For developers
+
+Each module under `sorting_tool/` starts with a docstring that explains purpose, pipeline placement, and **How to extend** (common contributor tasks). Start there before changing discovery, metadata guesses, BIDS naming, the viewer, or the GUI.
 
 ## Run
 
@@ -31,7 +35,7 @@ pip install -e .
 Every time you open a new terminal, go into the repo and activate the virtualenv:
 
 ```bash
-cd sorting-tool
+cd clinicalDICOM2BIDS-sorting-tool
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 ```
 
