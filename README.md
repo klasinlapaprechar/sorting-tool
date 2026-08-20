@@ -26,7 +26,66 @@ pip install -e .
 
 ## For developers
 
-Each module under `sorting_tool/` starts with a docstring that explains purpose, pipeline placement, and **How to extend** (common contributor tasks). Start there before changing discovery, metadata guesses, BIDS naming, the viewer, or the GUI.
+Every module under `sorting_tool/` opens with a docstring in the same
+shape — **HOW THIS FITS IN** (who calls it, what it calls) and **HOW TO
+EXTEND** (the specific functions to edit for common changes). That
+docstring is the source of truth; the map below is just the index into it.
+
+### Pipeline
+
+```text
+__main__.main()                    CLI args / interactive prompts
+    -> app.run_app(input_dir, output_dir)
+        -> discovery.discover_scans()      find *.nii/*.nii.gz under input_dir
+        -> app.MainWindow                  builds the window, loads scan 0
+            -> metadata.extract_meta()     per-scan sidecar + filename guesses
+            -> viewer.OrthoViewer          renders axial/sagittal/coronal
+            -> [user edits labels, clicks Save]
+            -> bids.save_to_bids()         copy + rename + new sidecar
+                -> discovery.mark_saved()  record progress
+```
+
+Nothing here writes back into the input tree — `bids.save_to_bids` only
+ever *copies* into the output tree. If you touch `bids.py`, keep that
+invariant.
+
+### Module map
+
+| Module | Owns | Talks to | Edit it when you want to... |
+|---|---|---|---|
+| [`__main__.py`](sorting_tool/__main__.py) | CLI arg parsing / interactive path prompts | calls `app.run_app` | add a CLI flag, change prompt wording, add a non-GUI batch mode |
+| [`app.py`](sorting_tool/app.py) | `MainWindow` (orchestration/layout), `RadioRow` widget, `prompt_directories`, `run_app` | calls `discovery`, `metadata`, `viewer`, `bids`; owns no filename/BIDS logic itself | add/rearrange a GUI field, change post-save navigation, change how the output dataset folder is named |
+| [`discovery.py`](sorting_tool/discovery.py) | finding scans (`discover_scans`) and the `sorting_progress.json` "already saved" tracker | called by `app` (find scans, check saved) and `bids` (`mark_saved` after a copy) | support another input extension, change where/how progress is persisted |
+| [`metadata.py`](sorting_tool/metadata.py) | `ScanMeta`, sidecar/filename parsing, the `*_OPTIONS` label vocabularies, and all `_guess_*` heuristics | called by `app.load_index` to prefill fields; `sidecar_for()` also used by `bids` to locate the source JSON | add/rename a label choice (Acq/VOI/CE/Type — also update the README table below), improve auto-detection of subject/session/plane/anatomy/type |
+| [`bids.py`](sorting_tool/bids.py) | destination path/filename construction (`build_stem`, `build_bids_paths`), the actual copy + sidecar write (`save_to_bids`), entity sanitizing | called by `app.save_scan`; calls `metadata.sidecar_for` and `discovery.mark_saved` | change filename/folder naming convention, add a new BIDS entity, change collision (`_run-N`) handling, change what's stored in the destination sidecar's `SortingTool` block |
+| [`viewer.py`](sorting_tool/viewer.py) | `OrthoViewer` / `PlaneView` / `ImageCanvas` — slice, brightness, zoom, pan, fit↔stretch rendering | called by `app` (`set_volume`/`clear`); self-contained otherwise | change windowing/brightness math, add a plane or MIP, change zoom limits or aspect handling |
+
+### Where to make common changes
+
+- **Add or rename an Acq / VOI / CE / Type option** — edit the matching
+  `*_OPTIONS` list in `metadata.py`, update the corresponding `_guess_*`
+  if it should be auto-detected, and update the "Label options" table
+  further down in this README. `app.py`'s radio rows read these lists
+  directly, so no GUI code changes are needed.
+- **Wire up a brand-new GUI field** (beyond Acq/VOI/CE/Type) — add a
+  widget in `app.MainWindow.__init__` (see `RadioRow` or the
+  Subject/Session `QLineEdit`s), pass its value into `save_to_bids(...)`
+  (via a new kwarg or the `labels=` dict), and decide whether it belongs
+  in the filename (`bids.build_stem`) or only in the sidecar.
+- **Change the output filename/folder pattern** — `bids.build_stem` (stem)
+  and `bids.build_bids_paths` (folder layout + collision handling).
+- **Improve subject/session/plane/anatomy detection** — the `_subject_from_*`,
+  `_session_from_*`, and `_guess_*` functions in `metadata.py`; they must
+  stay best-effort and never raise (return `""`/`None` on unknown input).
+- **Change viewer behavior** (zoom limits, brightness windowing, fit vs.
+  fill) — entirely inside `viewer.py`; `app.py` only calls `set_volume`/
+  `clear`/`set_stretch` and never touches pixels directly.
+- **Change progress tracking** (`sorting_progress.json`) — `discovery.py`
+  (`PROGRESS_NAME`, `load_progress`, `mark_saved`, `is_saved`).
+- Keep [`tests/test_metadata_bids.py`](tests/test_metadata_bids.py) in sync
+  when you change label vocabularies or naming/collision rules — it
+  exercises `discover_scans`, `extract_meta`, `build_stem`,
+  `build_bids_paths`, and `save_to_bids` directly.
 
 ## Run
 
